@@ -29,13 +29,17 @@ on:
           - android
           - all
   push:
-    # Geliştirme bu dalda sürüyor ve OTA'nın hızlı yolu olması bilinçli:
-    # her push telefondaki bundle'ı dakikalar içinde günceller. DERLEME
-    # buna dahil değil — o ayrı bir workflow ve yalnızca elle tetikleniyor
-    # (bkz. eas-build.yml), çünkü yarım saat sürüyor ve App Store
-    # Connect'e yükleme yapıyor.
+    # OTA yalnızca `ota` dalından çıkar. Geliştirme `main`'de sürüyor ve
+    # her push'un kullanıcıların telefonuna gitmesi istenmiyor: henüz
+    # arabada denenmemiş bir değişiklik, mağazadan indirilmiş uygulamaya
+    # dakikalar içinde düşerdi. Yayına hazır olan `main`'den `ota`'ya merge
+    # edilir; o merge'ün push'u yayındır.
+    #
+    # DERLEME buna dahil değil — o ayrı bir workflow ve yalnızca elle
+    # tetikleniyor (bkz. eas-build.yml), çünkü yarım saat sürüyor ve App
+    # Store Connect'e yükleme yapıyor.
     branches:
-      - main
+      - ota
 
 # İki yayın aynı anda çıkmasın.
 concurrency:
@@ -44,6 +48,10 @@ concurrency:
 
 jobs:
   update:
+    # Elle tetiklemede de yalnızca `ota` dalı yayınlanır. Actions'ta
+    # "Run workflow" derken dal olarak `main` seçilirse iş atlanır; aksi
+    # hâlde elle çalıştırma, push için konan kuralın arka kapısı olurdu.
+    if: github.ref == 'refs/heads/ota'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

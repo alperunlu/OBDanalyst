@@ -6,4 +6,4 @@
  * mi?" sorusunun tartışmasız cevabı. Arabaya çıkmadan Bus ekranına bakıp
  * beklenen değerle karşılaştırmak yeterli.
  */
-export const JS_BUILD_TAG = '2026-09-29 · js-35 (adapter-only scan, no bg location/audio)';
+export const JS_BUILD_TAG = '2026-10-14 · js-36 (renamed to OBD Analyst)';

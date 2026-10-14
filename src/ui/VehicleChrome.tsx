@@ -56,7 +56,7 @@ export function VehicleChrome({ subtitle = 'protocol' }: { subtitle?: ChromeSubt
     <View style={styles.wrap}>
       <View style={styles.row}>
         <View>
-          <Text style={type.vehicle}>D50 SCAN TOOL</Text>
+          <Text style={type.vehicle}>OBD ANALYST</Text>
           <Text style={[type.meta, { marginTop: space(1) }]}>{today()}</Text>
         </View>
         <View style={{ alignItems: 'flex-end' }}>

@@ -116,7 +116,7 @@ export class BleTransport implements ObdTransport {
       throw new Error('Bluetooth is off. Turn it on in Settings and try again.');
     }
     if (current === 'Unauthorized') {
-      throw new Error('Bluetooth permission was denied. Allow it for D50 in Settings.');
+      throw new Error('Bluetooth permission was denied. Allow it for OBD Analyst in Settings.');
     }
     if (current === 'Unsupported') {
       throw new Error('This device has no Bluetooth Low Energy support.');

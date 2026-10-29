@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppStore, ALL_PIDS } from '../src/state/store';
 import { orderedCards } from '../src/data/cardOrder';
@@ -20,6 +20,7 @@ import {
   Rule,
   SectionRule,
   Note,
+  Tap,
 } from '../src/ui/primitives';
 import { color, type, space, hairlineWidth } from '../src/ui/theme';
 
@@ -128,7 +129,7 @@ export default function LiveScreen() {
               durduruyormuş gibi görünürdü.
             */}
             {!cycle && (
-              <Pressable
+              <Tap
                 style={[styles.recordChip, isRecording && styles.recordChipOn]}
                 onPress={() => (isRecording ? stopRecording() : startRecording())}
                 disabled={notConnected}
@@ -137,11 +138,11 @@ export default function LiveScreen() {
                   text={isRecording ? 'Recording' : 'Record'}
                   tint={isRecording ? color.alert : color.chrome}
                 />
-              </Pressable>
+              </Tap>
             )}
 
             {!isRecording && !cycle && (
-              <Pressable
+              <Tap
                 style={styles.recordChip}
                 onPress={() => setPreflight(true)}
                 disabled={notConnected}
@@ -149,7 +150,7 @@ export default function LiveScreen() {
                 <Text style={[type.status, { color: notConnected ? color.muted : color.chrome }]}>
                   Guided
                 </Text>
-              </Pressable>
+              </Tap>
             )}
           </View>
         </View>
@@ -220,9 +221,9 @@ export default function LiveScreen() {
             <Label small>
               {cards.length > 1 ? 'Hold a card to move it' : `${cards.length} card`}
             </Label>
-            <Pressable onPress={() => setPicking(true)}>
+            <Tap onPress={() => setPicking(true)}>
               <Text style={styles.chooseLink}>Choose channels</Text>
-            </Pressable>
+            </Tap>
           </View>
         </View>
       </View>
@@ -626,8 +627,9 @@ function ChannelPicker({
             const on = selected.includes(pid.pid);
             const order = selected.indexOf(pid.pid);
             return (
-              <Pressable
+              <Tap
                 key={pid.pid}
+                highlight
                 style={styles.pickRow}
                 onPress={() => onToggle(pid.pid)}
               >
@@ -644,7 +646,7 @@ function ChannelPicker({
                   </Text>
                   <Text style={type.metaSmall}>{`01${pid.pid} · ${pid.unit}`}</Text>
                 </View>
-              </Pressable>
+              </Tap>
             );
           })}
 
@@ -664,8 +666,9 @@ function ChannelPicker({
               const on = selectedSensorChannels.includes(c.key);
               const order = selectedSensorChannels.indexOf(c.key);
               return (
-                <Pressable
+                <Tap
                   key={c.key}
+                  highlight
                   style={styles.pickRow}
                   onPress={() => void onToggleSensorChannel(c.key)}
                 >
@@ -682,7 +685,7 @@ function ChannelPicker({
                     </Text>
                     <Text style={type.metaSmall}>{c.detail}</Text>
                   </View>
-                </Pressable>
+                </Tap>
               );
             })}
             {sensorStatus ? <Note>{sensorStatus}</Note> : null}

@@ -8,8 +8,16 @@
  */
 
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, type ViewStyle, type StyleProp } from 'react-native';
-import Svg, { Polyline, Circle } from 'react-native-svg';
+import {
+  View,
+  Text,
+  Pressable,
+  StyleSheet,
+  type PressableProps,
+  type ViewStyle,
+  type StyleProp,
+} from 'react-native';
+import Svg, { Path, Polyline, Circle } from 'react-native-svg';
 import { color, type, space, hairlineWidth } from './theme';
 import { extentOf } from '../util/agg';
 
@@ -87,7 +95,7 @@ export function SectionRule({
 }) {
   return (
     <View style={[styles.sectionRule, style]}>
-      <Text style={type.label}>{label}</Text>
+      <Text style={[type.label, styles.sectionLabel]}>{label}</Text>
       {meta ? (
         <Text style={[type.metaSmall, metaColor ? { color: metaColor } : null]}>{meta}</Text>
       ) : null}
@@ -175,6 +183,59 @@ export function StatusDot({ text, tint }: { text: string; tint: string }) {
 }
 
 /**
+ * Dokunulabilir her şeyin temeli: basılınca görünür bir tepki veren Pressable.
+ *
+ * Eskiden hiçbir Pressable basılma durumu göstermiyordu; araçta, titreşimde
+ * dokunuşun algılanıp algılanmadığı anlaşılmıyordu. `highlight` satırlar
+ * içindir (zemin bir ton açılır); butonlarda yüzey zaten ayrıştığı için
+ * opaklık düşer.
+ */
+export function Tap({
+  style,
+  highlight,
+  disabled,
+  ...rest
+}: Omit<PressableProps, 'style'> & { style?: StyleProp<ViewStyle>; highlight?: boolean }) {
+  return (
+    <Pressable
+      {...rest}
+      disabled={disabled}
+      style={({ pressed }) => [
+        style,
+        pressed && !disabled && (highlight ? styles.pressedRow : styles.pressed),
+      ]}
+    />
+  );
+}
+
+/**
+ * Açılır/kapanır ya da başka bir yere götüren satırın işareti. "Open/Change"
+ * yazısı satırın dokunulabilir olduğunu söylemiyordu; ok, söylüyor.
+ */
+export function Chevron({ open, tint = color.chrome }: { open?: boolean; tint?: string }) {
+  return (
+    <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+      <Path
+        d={open ? 'm6 9 6 6 6-6' : 'm9 18 6-6-6-6'}
+        stroke={tint}
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+/**
+ * Seçili satırın solundaki 2px krem çubuk — sekme çubuğundaki göstergenin
+ * dikey karşılığı. Kenar boşluğuna oturur, satırın içeriğini kaydırmaz;
+ * kullanan satır `position: relative` (varsayılan) olmalı.
+ */
+export function SelectedBar({ inset = space(2) }: { inset?: number }) {
+  return <View style={[styles.selectedBar, { top: inset, bottom: inset }]} pointerEvents="none" />;
+}
+
+/**
  * Birincil eylem: krem dolgu, yeşil metin. Ekranda en fazla bir tane olmalı —
  * dolgu bu dilde nadir olduğu için tek başına hiyerarşi kuruyor.
  */
@@ -190,13 +251,13 @@ export function PrimaryAction({
   style?: StyleProp<ViewStyle>;
 }) {
   return (
-    <Pressable
+    <Tap
       style={[styles.primaryAction, disabled && styles.disabled, style]}
       onPress={onPress}
       disabled={disabled}
     >
       <Text style={[type.action, { color: color.onInk }]}>{label}</Text>
-    </Pressable>
+    </Tap>
   );
 }
 
@@ -224,13 +285,13 @@ export function GhostAction({
   style?: StyleProp<ViewStyle>;
 }) {
   return (
-    <Pressable
+    <Tap
       style={[styles.ghostAction, { borderColor: tint }, disabled && styles.disabled, style]}
       onPress={onPress}
       disabled={disabled}
     >
       <Text style={[type.action, { color: textTint }]}>{label}</Text>
-    </Pressable>
+    </Tap>
   );
 }
 
@@ -337,6 +398,11 @@ const styles = StyleSheet.create({
     borderBottomColor: color.hairlineStrong,
     paddingBottom: space(1.5),
   },
+  /**
+   * Bölüm etiketi gövdedeki etiketlerden bir kademe güçlü: soluk yeşil-gri
+   * 12px, uzun bir sayfada bölümleri birbirinden ayırmaya yetmiyordu.
+   */
+  sectionLabel: { color: color.chrome, fontSize: 13 },
   measureRow: { flexDirection: 'row', alignItems: 'baseline', gap: space(2) },
   // flexShrink + minWidth:0 olmadan uzun bir rakam satırı taşırır.
   measureValue: { flexShrink: 1, minWidth: 0 },
@@ -363,6 +429,14 @@ const styles = StyleSheet.create({
     backgroundColor: color.groundAlt,
   },
   disabled: { opacity: 0.35 },
+  pressed: { opacity: 0.6 },
+  pressedRow: { backgroundColor: color.groundAlt },
+  selectedBar: {
+    position: 'absolute',
+    left: -space(3),
+    width: 2,
+    backgroundColor: color.ink,
+  },
   note: {
     borderLeftWidth: hairlineWidth,
     borderLeftColor: color.hairlineStrong,

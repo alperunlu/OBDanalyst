@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import * as repo from '../src/db/repo';
@@ -26,7 +26,7 @@ import { useAppStore } from '../src/state/store';
 import { breadcrumb } from '../src/util/crashLog';
 import type { Session } from '../src/db/types';
 import { VehicleChrome } from '../src/ui/VehicleChrome';
-import { SectionRule, Rule } from '../src/ui/primitives';
+import { SectionRule, Rule, Tap, Chevron, SelectedBar } from '../src/ui/primitives';
 import { color, type, space, hairlineWidth } from '../src/ui/theme';
 
 /** Trips — kaydedilmiş oturumlar, özetleri ve dışa aktarımları. */
@@ -243,7 +243,9 @@ export default function TripsScreen() {
 
           return (
             <View key={s.id} style={styles.trip}>
-              <Pressable
+              {open ? <SelectedBar inset={space(3)} /> : null}
+              <Tap
+                highlight
                 style={styles.tripHead}
                 onPress={() => {
                   setOpenId(open ? null : s.id);
@@ -258,10 +260,8 @@ export default function TripsScreen() {
                     {`${durationSec !== null ? `${durationSec} s` : 'incomplete'} · ${s.pids.length} channels`}
                   </Text>
                 </View>
-                <Text style={[type.status, { color: color.chrome, fontSize: 12 }]}>
-                  {open ? 'Close' : 'Open'}
-                </Text>
-              </Pressable>
+                <Chevron open={open} />
+              </Tap>
 
               {open && (
                 <View style={styles.tripBody}>
@@ -310,11 +310,11 @@ function TripAction({
   tint?: string;
 }) {
   return (
-    <Pressable style={styles.tripActionBtn} onPress={onPress} disabled={disabled}>
+    <Tap style={styles.tripActionBtn} onPress={onPress} disabled={disabled}>
       <Text style={[type.status, { fontSize: 13, color: disabled ? color.muted : tint }]}>
         {label}
       </Text>
-    </Pressable>
+    </Tap>
   );
 }
 

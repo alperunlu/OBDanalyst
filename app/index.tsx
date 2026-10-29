@@ -1,15 +1,15 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  Pressable,
   ScrollView,
   ActivityIndicator,
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppStore } from '../src/state/store';
+import * as repo from '../src/db/repo';
 import type { RawLogEntry } from '../src/state/store';
 import type { ProfileCandidate } from '../src/ble/profiles';
 import { VehicleChrome } from '../src/ui/VehicleChrome';
@@ -22,6 +22,10 @@ import {
   Frame,
   Measure,
   Tag,
+  Tap,
+  Chevron,
+  SelectedBar,
+  StatusDot,
 } from '../src/ui/primitives';
 import {
   formatTyreSize,
@@ -44,14 +48,14 @@ import { color, type, space, hairlineWidth } from '../src/ui/theme';
  * ekran "sürekli bakılan bir sekme" olmaktan çıkıp yalnızca bağlantı
  * kurulmadığında ya da bozulduğunda açılan bir sayfaya dönüşüyor.
  *
- * Debug sekmesinin bütün içeriği (sürüm, çökme kaydı, elle GATT profili,
- * PID taraması, ham trafik) buranın altına taşındı. Gerekçe iki tane:
- * alt barda altıncı sekmeye yer yoktu ve "Debug" etiketli bir sekme
- * yayınlanan bir uygulamada yanlış duruyordu. İçerik zaten bu ekranın
- * cevapladığı soruyla aynı soruyu cevaplıyor — "bağlantıda ne oluyor".
- * Sıralama bilinçli: her ziyarette bakılan şeyler üstte, yalnızca bir şey
- * ters gittiğinde bakılanlar altta.
+ * Görünür kısım yalnızca her kullanıcının işi: adaptör, oturum, lastik
+ * ebadı (ve gerektiğinde elle GATT profili). Eski Debug sekmesinin içeriği
+ * (çökme kaydı, PID taraması, ham trafik) ve ses ölçer, varsayılan kapalı
+ * bir Advanced bölümünde duruyor: sekiz eşit ağırlıklı bölüm alt alta
+ * dizildiğinde sayfa tek bir akışa dönüşüyor ve bölümler ayırt edilmiyordu.
  */
+const ADVANCED_OPEN_KEY = 'link_advanced_open';
+
 export default function LinkScreen() {
   const connectionState = useAppStore((s) => s.connectionState);
   const initResult = useAppStore((s) => s.initResult);
@@ -107,6 +111,21 @@ export default function LinkScreen() {
    * burada görünür.
    */
   const [crash, setCrash] = useState<CrashRecord | null>(() => readLastCrash());
+
+  /** Advanced bölümü açık mı — uygulama yeniden açıldığında da hatırlanıyor. */
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  useEffect(() => {
+    repo
+      .getSetting(ADVANCED_OPEN_KEY)
+      .then((v) => setAdvancedOpen(v === '1'))
+      .catch(() => undefined);
+  }, []);
+  const toggleAdvanced = useCallback(() => {
+    setAdvancedOpen((open) => {
+      void repo.setSetting(ADVANCED_OPEN_KEY, open ? '0' : '1').catch(() => undefined);
+      return !open;
+    });
+  }, []);
 
   const shareCrash = useCallback(async () => {
     if (!crash) return;
@@ -197,7 +216,13 @@ export default function LinkScreen() {
               {scanResults.map((d) => {
                 const on = selectedDeviceId === d.id;
                 return (
-                  <Pressable key={d.id} style={styles.deviceRow} onPress={() => selectDevice(d)}>
+                  <Tap
+                    key={d.id}
+                    style={styles.deviceRow}
+                    onPress={() => selectDevice(d)}
+                    highlight
+                  >
+                    {on ? <SelectedBar /> : null}
                     <View style={styles.pickMark}>
                       {on ? <View style={styles.pickMarkFill} /> : null}
                     </View>
@@ -207,7 +232,7 @@ export default function LinkScreen() {
                       </Text>
                       <Text style={type.metaSmall}>{`RSSI ${d.rssi ?? '—'}`}</Text>
                     </View>
-                  </Pressable>
+                  </Tap>
                 );
               })}
 
@@ -244,7 +269,6 @@ export default function LinkScreen() {
           <View>
             <SectionRule label="Session" />
             <Fact label="Adapter" value={initResult.adapterInfo} />
-            {bleProfileLabel ? <Fact label="GATT profile" value={bleProfileLabel} /> : null}
             <Fact label="Device" value={selectedDeviceName ?? selectedDeviceId ?? '—'} />
             {/*
               VIN burada duruyor çünkü bu ekranın işi "neye bağlıyım"
@@ -283,7 +307,7 @@ export default function LinkScreen() {
           seçeneğin fabrika ebadına göre sapması da yazıyor — kullanıcı
           seçtiği şeyin okumaları ne kadar değiştireceğini o anda görüyor.
         */}
-        <View style={{ marginTop: space(6) }}>
+        <View style={{ marginTop: space(8) }}>
           <SectionRule label="Tyres" meta={formatTyreSize(vehicle.fittedTyre)} />
           <Note>
             The ECU computes speed from wheel revolutions using the factory size
@@ -292,7 +316,7 @@ export default function LinkScreen() {
             checks.
           </Note>
 
-          <Pressable style={styles.tyreSelect} onPress={() => setTyreOpen((v) => !v)}>
+          <Tap style={styles.tyreSelect} onPress={() => setTyreOpen((v) => !v)}>
             <View style={{ flex: 1 }}>
               <Text style={[type.prose, { color: color.ink }]}>
                 {formatTyreSize(vehicle.fittedTyre)}
@@ -301,10 +325,8 @@ export default function LinkScreen() {
                 {`${Math.round(rollingCircumferenceMm(vehicle.fittedTyre))} mm rolling circumference · ${Math.round(revsPerKm(vehicle.fittedTyre))} revs/km`}
               </Text>
             </View>
-            <Text style={[type.status, { color: color.chrome, fontSize: 12 }]}>
-              {tyreOpen ? 'Close' : 'Change'}
-            </Text>
-          </Pressable>
+            <Chevron open={tyreOpen} />
+          </Tap>
 
           {tyreOpen && (
             <View style={styles.tyreList}>
@@ -330,70 +352,8 @@ export default function LinkScreen() {
           ) : null}
         </View>
 
-        {/*
-          Buraya taşındı (eskiden Live ekranındaydı) çünkü kalibrasyon canlı
-          geri bildirim istiyor: elindeki referans metreye bakıp +/- ile
-          sayı eşleşene kadar nudge ediyorsun. Sayı ile düğmeler aynı ekranda
-          olmalı, yoksa her dokunuşta iki ekran arası gidip gelmen gerekirdi.
-
-          OBD'den de BAĞIMSIZ: adaptöre bağlanmadan, kayıt başlatmadan
-          çalışır — "kabinde şu an ne kadar gürültü var" sorusunun aracın
-          ECU'suyla ilgisi yok. Bu yüzden bir kurulum işi olarak Link'te
-          duruyor, tıpkı lastik ebadı gibi.
-
-          Live ekranındaki `mic_db` kartı artık BUNDAN bağımsız: kayıt
-          sırasında SensorLogger'ın kendi mikrofon dinleyicisinden besleniyor.
-        */}
-        <View style={{ marginTop: space(6) }}>
-          <SoundMeter
-            on={soundMeterOn}
-            now={soundNow}
-            min={soundMin}
-            max={soundMax}
-            avg={soundAvg}
-            error={soundError}
-            calibration={splCalibrationDb}
-            onStart={() => void startSoundMeter()}
-            onStop={stopSoundMeter}
-            onReset={resetSoundStats}
-            onCalibrate={(delta) => void setSplCalibration(splCalibrationDb + delta)}
-          />
-        </View>
-
-        {/*
-          Buradan aşağısı eski Debug sekmesi. Sırası kasıtlı: çökme kaydı
-          üstte (bir şey ters gittiğinde ilk sorulan bu), ham trafik
-          en altta — en teknik olan en derinde.
-        */}
-        {crash && (
-          <View style={{ marginTop: space(6) }}>
-            <SectionRule
-              label="Last crash"
-              meta={new Date(crash.at).toLocaleString()}
-              metaColor={color.alert}
-            />
-            <Text style={[type.prose, { color: color.ink, marginTop: space(2) }]}>
-              {crash.message}
-            </Text>
-            {crash.stack ? (
-              <Text style={[type.metaSmall, { marginTop: space(2), lineHeight: 14 }]}>
-                {crash.stack.split('\n').slice(0, 8).join('\n')}
-              </Text>
-            ) : null}
-            {crash.breadcrumbs.length > 0 ? (
-              <Text style={[type.metaSmall, { marginTop: space(2), lineHeight: 14 }]}>
-                {crash.breadcrumbs.slice(-4).join('\n')}
-              </Text>
-            ) : null}
-            <View style={{ flexDirection: 'row', gap: space(3), marginTop: space(2.5) }}>
-              <GhostAction label="Share crash" onPress={shareCrash} style={{ flex: 1 }} />
-              <GhostAction label="Dismiss" onPress={dismissCrash} style={{ flex: 1 }} />
-            </View>
-          </View>
-        )}
-
         {bleCandidates && bleCandidates.length > 0 && (
-          <View style={{ marginTop: space(6) }}>
+          <View style={{ marginTop: space(8) }}>
             <SectionRule
               label="Manual profile"
               meta="No automatic match"
@@ -423,72 +383,150 @@ export default function LinkScreen() {
           </View>
         )}
 
-        <View style={{ marginTop: space(6) }}>
-          <SectionRule
-            label="PID scan"
-            meta={
-              scanProgress
-                ? `${scanProgress.done}/${scanProgress.total}`
-                : scanRows
-                  ? `${scanRows.filter((r) => r.answered).length}/${scanRows.length} answered`
-                  : undefined
-            }
-          />
-          <Note>
-            Probes every PID the ECU claims and writes a report — the definitive answer to what
-            this car actually supports.
-          </Note>
-          <GhostAction
-            label={scanProgress ? `Scanning ${scanProgress.currentPid}` : 'Scan PIDs'}
-            onPress={pidScan}
-            disabled={!linked || scanProgress !== null}
-            style={{ marginTop: space(3) }}
-          />
-        </View>
-
         {/*
-          Ham trafik. Eskiden ekranın yarısını kaplayan ters çevrilmiş bir
-          FlatList'ti; artık sayfanın içinde sabit yükseklikte bir pencere.
-          VirtualizedList sayfayla aynı yönde kaydırılan bir ScrollView'in
-          içine konulamaz, o yüzden sade ScrollView kullanılıyor — kayıt
-          zaten 500 satırla sınırlı (MAX_LOG_ENTRIES), sanallaştırmaya gerek
-          yok.
-
-          Sıra artık YENİDEN ESKİYE: pencere sayfanın içinde olduğu için
-          otomatik en alta kaydırma yok, dolayısıyla en son satır görünür
-          olan yerde — yani en üstte — durmalı.
+          Advanced: her kullanıcının her ziyarette baktığı şeyler değil —
+          ses ölçer, çökme kaydı, GATT profili, PID taraması, ham trafik.
+          Kapalı başlıyor ve durumu hatırlanıyor; destek gerektiğinde
+          "Link → Advanced → Share log" demek yetiyor. Elle GATT profili
+          burada DEĞİL: adaptörü tanınmayan kullanıcı onu aramak zorunda
+          kalmamalı, zaten yalnızca gerektiğinde görünüyor.
         */}
-        <View style={{ marginTop: space(6) }}>
-          <SectionRule label="Traffic" meta={`${rawLog.length} lines`} />
-          <ScrollView
-            style={styles.logWindow}
-            contentContainerStyle={{ padding: space(2) }}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator={false}
+        <View style={{ marginTop: space(8) }}>
+          <Tap
+            style={styles.disclosure}
+            onPress={toggleAdvanced}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: advancedOpen }}
           >
-            {rawLog.length === 0 ? (
-              <Text style={type.meta}>No traffic yet. Connect the adapter above.</Text>
-            ) : (
-              [...rawLog]
-                .reverse()
-                .map((entry, i) => <LogLine key={`${entry.ts}-${i}`} entry={entry} />)
-            )}
-          </ScrollView>
-          <View style={styles.logActions}>
-            <GhostAction
-              label={logBusy ? 'Preparing' : 'Share log'}
-              onPress={shareLog}
-              disabled={logBusy || rawLog.length === 0}
-              style={{ flex: 1 }}
-            />
-            <GhostAction
-              label="Clear"
-              onPress={clearLog}
-              textTint={color.chrome}
-              style={{ flex: 1 }}
-            />
-          </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[type.label, { color: color.chrome, fontSize: 13 }]}>Advanced</Text>
+              <Text style={[type.metaSmall, { marginTop: space(0.75) }]}>
+                Sound meter · PID scan · Adapter log
+              </Text>
+            </View>
+            {crash ? <StatusDot text="Crash" tint={color.alert} /> : null}
+            <Chevron open={advancedOpen} />
+          </Tap>
         </View>
+
+        {advancedOpen && (
+          <View>
+            {crash && (
+              <View style={{ marginTop: space(6) }}>
+                <SectionRule
+                  label="Last crash"
+                  meta={new Date(crash.at).toLocaleString()}
+                  metaColor={color.alert}
+                />
+                <Text style={[type.prose, { color: color.ink, marginTop: space(2) }]}>
+                  {crash.message}
+                </Text>
+                {crash.stack ? (
+                  <Text style={[type.metaSmall, { marginTop: space(2), lineHeight: 14 }]}>
+                    {crash.stack.split('\n').slice(0, 8).join('\n')}
+                  </Text>
+                ) : null}
+                {crash.breadcrumbs.length > 0 ? (
+                  <Text style={[type.metaSmall, { marginTop: space(2), lineHeight: 14 }]}>
+                    {crash.breadcrumbs.slice(-4).join('\n')}
+                  </Text>
+                ) : null}
+                <View style={{ flexDirection: 'row', gap: space(3), marginTop: space(2.5) }}>
+                  <GhostAction label="Share crash" onPress={shareCrash} style={{ flex: 1 }} />
+                  <GhostAction label="Dismiss" onPress={dismissCrash} style={{ flex: 1 }} />
+                </View>
+              </View>
+            )}
+
+            <View style={{ marginTop: space(6) }}>
+              <SoundMeter
+                on={soundMeterOn}
+                now={soundNow}
+                min={soundMin}
+                max={soundMax}
+                avg={soundAvg}
+                error={soundError}
+                calibration={splCalibrationDb}
+                onStart={() => void startSoundMeter()}
+                onStop={stopSoundMeter}
+                onReset={resetSoundStats}
+                onCalibrate={(delta) => void setSplCalibration(splCalibrationDb + delta)}
+              />
+            </View>
+            {linked && bleProfileLabel ? (
+              <View style={{ marginTop: space(6) }}>
+                <SectionRule label="Bluetooth" />
+                <Fact label="GATT profile" value={bleProfileLabel} />
+              </View>
+            ) : null}
+            <View style={{ marginTop: space(6) }}>
+              <SectionRule
+                label="PID scan"
+                meta={
+                  scanProgress
+                    ? `${scanProgress.done}/${scanProgress.total}`
+                    : scanRows
+                      ? `${scanRows.filter((r) => r.answered).length}/${scanRows.length} answered`
+                      : undefined
+                }
+              />
+              <Note>
+                Probes every PID the ECU claims and writes a report — the definitive answer to what
+                this car actually supports.
+              </Note>
+              <GhostAction
+                label={scanProgress ? `Scanning ${scanProgress.currentPid}` : 'Scan PIDs'}
+                onPress={pidScan}
+                disabled={!linked || scanProgress !== null}
+                style={{ marginTop: space(3) }}
+              />
+            </View>
+
+            {/*
+              Ham trafik. Eskiden ekranın yarısını kaplayan ters çevrilmiş bir
+              FlatList'ti; artık sayfanın içinde sabit yükseklikte bir pencere.
+              VirtualizedList sayfayla aynı yönde kaydırılan bir ScrollView'in
+              içine konulamaz, o yüzden sade ScrollView kullanılıyor — kayıt
+              zaten 500 satırla sınırlı (MAX_LOG_ENTRIES), sanallaştırmaya gerek
+              yok.
+
+              Sıra artık YENİDEN ESKİYE: pencere sayfanın içinde olduğu için
+              otomatik en alta kaydırma yok, dolayısıyla en son satır görünür
+              olan yerde — yani en üstte — durmalı.
+            */}
+            <View style={{ marginTop: space(6) }}>
+              <SectionRule label="Traffic" meta={`${rawLog.length} lines`} />
+              <ScrollView
+                style={styles.logWindow}
+                contentContainerStyle={{ padding: space(2) }}
+                nestedScrollEnabled
+                showsVerticalScrollIndicator={false}
+              >
+                {rawLog.length === 0 ? (
+                  <Text style={type.meta}>No traffic yet. Connect the adapter above.</Text>
+                ) : (
+                  [...rawLog]
+                    .reverse()
+                    .map((entry, i) => <LogLine key={`${entry.ts}-${i}`} entry={entry} />)
+                )}
+              </ScrollView>
+              <View style={styles.logActions}>
+                <GhostAction
+                  label={logBusy ? 'Preparing' : 'Share log'}
+                  onPress={shareLog}
+                  disabled={logBusy || rawLog.length === 0}
+                  style={{ flex: 1 }}
+                />
+                <GhostAction
+                  label="Clear"
+                  onPress={clearLog}
+                  textTint={color.chrome}
+                  style={{ flex: 1 }}
+                />
+              </View>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       <View style={styles.actions}>
@@ -531,7 +569,8 @@ function TyreOption({
   const isFactory = sameTyreSize(option, factory);
 
   return (
-    <Pressable style={styles.tyreOption} onPress={onPick}>
+    <Tap style={styles.tyreOption} onPress={onPick} highlight>
+      {selected ? <SelectedBar /> : null}
       <View style={styles.pickMark}>{selected ? <View style={styles.pickMarkFill} /> : null}</View>
       <View style={{ flex: 1 }}>
         <Text style={[type.prose, { color: selected ? color.ink : color.chrome }]}>
@@ -549,7 +588,7 @@ function TyreOption({
       >
         {`${deviation > 0 ? '+' : ''}${deviation.toFixed(1)} %`}
       </Text>
-    </Pressable>
+    </Tap>
   );
 }
 
@@ -573,9 +612,9 @@ function vinSummary(vin: string): string {
  * Gürültü ölçer — dB(A).
  *
  * OBD'den bağımsız: adaptör bağlı olmasa da çalışıyor, çünkü "kabinde ne
- * kadar gürültü var" sorusunun aracın ECU'suyla ilgisi yok. Ölçüm ayrı
- * bir uygulama gerektirmesin diye Link ekranına, kurulum işlerinin
- * yanına kondu (bkz. Tyres bölümü — aynı gerekçe).
+ * kadar gürültü var" sorusunun aracın ECU'suyla ilgisi yok. Link'in
+ * Advanced bölümünde duruyor; kalibrasyon canlı geri bildirim istediği
+ * için sayı ile +/- düğmeleri aynı yerde.
  *
  * Anlık değerin yanında MIN/ORT/MAKS de gösteriliyor: gürültü sürekli
  * dalgalanır, tek bir anlık sayı ("73") aslında hiçbir şey söylemez.
@@ -649,20 +688,20 @@ function SoundMeter({
             {`0 dBFS = ${calibration} dB SPL. Put a meter you trust next to the phone and nudge until they agree.`}
           </Text>
         </View>
-        <Pressable
+        <Tap
           style={styles.calButton}
           onPress={() => onCalibrate(-1)}
           disabled={calibration <= MIN_SPL_CALIBRATION_DB}
         >
           <Text style={[type.status, { color: color.ink, fontSize: 15 }]}>−</Text>
-        </Pressable>
-        <Pressable
+        </Tap>
+        <Tap
           style={styles.calButton}
           onPress={() => onCalibrate(1)}
           disabled={calibration >= MAX_SPL_CALIBRATION_DB}
         >
           <Text style={[type.status, { color: color.ink, fontSize: 15 }]}>+</Text>
-        </Pressable>
+        </Tap>
       </View>
 
       {error ? (
@@ -729,14 +768,14 @@ function CandidateRow({
       </Text>
       <View style={styles.candidateActions}>
         {candidate.isNotifiable && (
-          <Pressable onPress={onNotify} style={styles.candidateBtn}>
+          <Tap onPress={onNotify} style={styles.candidateBtn}>
             <Tag text={isNotify ? '✓ Notify' : 'Notify'} tint={isNotify ? color.ink : color.muted} />
-          </Pressable>
+          </Tap>
         )}
         {candidate.isWritable && (
-          <Pressable onPress={onWrite} style={styles.candidateBtn}>
+          <Tap onPress={onWrite} style={styles.candidateBtn}>
             <Tag text={isWrite ? '✓ Write' : 'Write'} tint={isWrite ? color.ink : color.muted} />
-          </Pressable>
+          </Tap>
         )}
       </View>
     </View>
@@ -812,6 +851,18 @@ const styles = StyleSheet.create({
     backgroundColor: color.groundAlt,
   },
   tyreList: { marginTop: space(1) },
+  /** Advanced başlığı — lastik seçicisiyle aynı dokunulabilir yüzey. */
+  disclosure: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space(3),
+    minHeight: 56,
+    paddingHorizontal: space(3),
+    paddingVertical: space(2.5),
+    borderWidth: hairlineWidth,
+    borderColor: color.hairlineStrong,
+    backgroundColor: color.groundAlt,
+  },
   soundFrame: { paddingBottom: space(2), marginTop: space(1) },
   soundStats: {
     flexDirection: 'row',

@@ -9,7 +9,6 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as Updates from 'expo-updates';
 import { useAppStore } from '../src/state/store';
 import type { RawLogEntry } from '../src/state/store';
 import type { ProfileCandidate } from '../src/ble/profiles';
@@ -35,7 +34,6 @@ import type { TyreSize } from '../src/analysis/vehicle';
 import { decodeVin } from '../src/obd/vin';
 import { describeSpl, MIN_SPL_CALIBRATION_DB, MAX_SPL_CALIBRATION_DB } from '../src/analysis/spl';
 import { writeAndShare } from '../src/util/exportFile';
-import { JS_BUILD_TAG } from '../src/ui/buildTag';
 import { readLastCrash, clearLastCrash, type CrashRecord } from '../src/util/crashLog';
 import { color, type, space, hairlineWidth } from '../src/ui/theme';
 
@@ -103,40 +101,12 @@ export default function LinkScreen() {
 
   const [logBusy, setLogBusy] = useState(false);
   const [manualBusy, setManualBusy] = useState(false);
-  const [updateBusy, setUpdateBusy] = useState(false);
   /**
    * Son yakalanmamış JS hatası. TestFlight'ın çökme raporu yalnızca yerel
    * yığını içeriyor — hatanın metni bu dosyada; uygulama yeniden açılınca
    * burada görünür.
    */
   const [crash, setCrash] = useState<CrashRecord | null>(() => readLastCrash());
-
-  /**
-   * Elle güncelleme indirme. Arabada, uygulamayı iki kez kapatıp açmak yerine
-   * tek dokunuşla en son JS sürümüne geçmeyi sağlıyor.
-   */
-  const checkUpdate = useCallback(async () => {
-    if (!Updates.isEnabled) {
-      Alert.alert('Development mode', 'OTA updates only work in a real build.');
-      return;
-    }
-    setUpdateBusy(true);
-    try {
-      const check = await Updates.checkForUpdateAsync();
-      if (!check.isAvailable) {
-        Alert.alert('Up to date', 'Already running the latest version.');
-        return;
-      }
-      await Updates.fetchUpdateAsync();
-      Alert.alert('Update downloaded', 'The app will restart.', [
-        { text: 'OK', onPress: () => void Updates.reloadAsync() },
-      ]);
-    } catch (e) {
-      Alert.alert('Update failed', e instanceof Error ? e.message : String(e));
-    } finally {
-      setUpdateBusy(false);
-    }
-  }, []);
 
   const shareCrash = useCallback(async () => {
     if (!crash) return;
@@ -391,24 +361,10 @@ export default function LinkScreen() {
         </View>
 
         {/*
-          Buradan aşağısı eski Debug sekmesi. Sırası kasıtlı: sürüm ve çökme
-          kaydı üstte (bir şey ters gittiğinde ilk sorulan bunlar), ham trafik
+          Buradan aşağısı eski Debug sekmesi. Sırası kasıtlı: çökme kaydı
+          üstte (bir şey ters gittiğinde ilk sorulan bu), ham trafik
           en altta — en teknik olan en derinde.
         */}
-        <View style={{ marginTop: space(6) }}>
-          <SectionRule label="Build" meta={Updates.isEmbeddedLaunch ? 'Embedded' : 'OTA'} />
-          <View style={styles.buildRow}>
-            <Text style={[type.status, { color: color.ink, fontSize: 14 }]}>{JS_BUILD_TAG}</Text>
-            <Text style={type.metaSmall}>{Updates.runtimeVersion ?? '—'}</Text>
-          </View>
-          <GhostAction
-            label={updateBusy ? 'Checking' : 'Check for update'}
-            onPress={checkUpdate}
-            disabled={updateBusy}
-            style={{ marginTop: space(2.5) }}
-          />
-        </View>
-
         {crash && (
           <View style={{ marginTop: space(6) }}>
             <SectionRule
@@ -893,12 +849,6 @@ const styles = StyleSheet.create({
   },
   actions: { flexDirection: 'row', gap: space(3), paddingHorizontal: space(5), paddingVertical: space(3) },
   loading: { flex: 1, minHeight: 48, alignItems: 'center', justifyContent: 'center', gap: space(1.5) },
-  buildRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-    paddingTop: space(2.5),
-  },
   candidateList: { marginTop: space(3) },
   candidate: {
     paddingVertical: space(2),

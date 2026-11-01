@@ -50,7 +50,7 @@ export default function FaultsScreen() {
     if (!report) return;
     try {
       const { uri, shared } = await writeAndShare(
-        `obd_faults_${Date.now()}.txt`,
+        `obda_faults_${Date.now()}.txt`,
         report,
         'text/plain',
         'Share fault code report',

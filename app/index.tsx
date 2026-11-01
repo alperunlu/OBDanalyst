@@ -135,7 +135,7 @@ export default function LinkScreen() {
       `Breadcrumbs:\n${crash.breadcrumbs.join('\n')}\n`;
     try {
       const { uri, shared } = await writeAndShare(
-        `d50_crash_${crash.at}.txt`,
+        `obda_crash_${crash.at}.txt`,
         text,
         'text/plain',
         'Share crash report',
@@ -158,7 +158,7 @@ export default function LinkScreen() {
         .map((e) => `${new Date(e.ts).toISOString()} [${e.direction}] ${e.text}`)
         .join('\n');
       const { uri, shared } = await writeAndShare(
-        `obd_debug_${Date.now()}.txt`,
+        `obda_debug_${Date.now()}.txt`,
         text,
         'text/plain',
         'Share debug log',
@@ -176,7 +176,7 @@ export default function LinkScreen() {
     if (!report) return;
     try {
       const { uri, shared } = await writeAndShare(
-        `obd_pid_scan_${Date.now()}.txt`,
+        `obda_pid_scan_${Date.now()}.txt`,
         report,
         'text/plain',
         'Share PID scan',

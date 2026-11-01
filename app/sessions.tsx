@@ -111,7 +111,7 @@ export default function TripsScreen() {
       const csv = toWideCsv(samples, channelsForKeys(session.pids));
       breadcrumb(`export csv session ${session.id}: ${csv.length} chars, writing`);
       const { uri, shared } = await writeAndShare(
-        `obd_session_${session.id}_${session.startedAt}.csv`,
+        `obda_session_${session.id}_${session.startedAt}.csv`,
         csv,
         'text/csv',
         'Share session',
@@ -179,7 +179,7 @@ export default function TripsScreen() {
         });
 
         const { uri, shared } = await writeAndShare(
-          `d50_report_${session.id}_${session.startedAt}.html`,
+          `obda_report_${session.id}_${session.startedAt}.html`,
           html,
           'text/html',
           'Share report',
@@ -208,7 +208,7 @@ export default function TripsScreen() {
         .map((r) => `${new Date(r.ts).toISOString()} [${r.direction}] ${r.text}`)
         .join('\n');
       const { uri, shared } = await writeAndShare(
-        `obd_session_${session.id}_${session.startedAt}_log.txt`,
+        `obda_session_${session.id}_${session.startedAt}_log.txt`,
         text,
         'text/plain',
         'Share session log',

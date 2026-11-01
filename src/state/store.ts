@@ -1377,8 +1377,8 @@ function keepScreenAwake(on: boolean): void {
       activateKeepAwakeAsync?: (tag?: string) => Promise<void>;
       deactivateKeepAwake?: (tag?: string) => void;
     };
-    if (on) void mod.activateKeepAwakeAsync?.('d50-recording');
-    else mod.deactivateKeepAwake?.('d50-recording');
+    if (on) void mod.activateKeepAwakeAsync?.('obda-recording');
+    else mod.deactivateKeepAwake?.('obda-recording');
   } catch {
     /* native modül yoksa sessizce vazgeç */
   }

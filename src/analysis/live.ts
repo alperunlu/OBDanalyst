@@ -21,7 +21,7 @@ import {
   accelerationSeries,
   type SeriesMap,
 } from './derived';
-import { MINI_R50, type VehicleProfile } from './vehicle';
+import { GENERIC_VEHICLE, type VehicleProfile } from './vehicle';
 
 export interface DerivedReading {
   readonly key: string;
@@ -59,7 +59,7 @@ export interface DeriveOptions {
 }
 
 export function deriveLive(series: SeriesMap, options: DeriveOptions = {}): DerivedReading[] {
-  const vehicle = options.vehicle ?? MINI_R50;
+  const vehicle = options.vehicle ?? GENERIC_VEHICLE;
   const supported = options.isPidSupported ?? (() => true);
 
   const rpm = latest(series, '0C');

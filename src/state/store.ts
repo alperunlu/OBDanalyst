@@ -59,7 +59,15 @@ import {
   SELECTABLE_SENSOR_CHANNELS,
   type SensorGroupKey,
 } from '../data/channels';
-import { MINI_R50, withFittedTyre, type TyreSize, type VehicleProfile } from '../analysis/vehicle';
+import {
+  GENERIC_VEHICLE,
+  VEHICLE_PROFILES,
+  profileForVin,
+  vehicleFor,
+  type TyreSize,
+  type VehicleProfile,
+  type VehicleProfileId,
+} from '../analysis/vehicle';
 import { parseTyreSize, formatTyreSize } from '../analysis/tyre';
 import {
   DEFAULT_SPL_CALIBRATION_DB,
@@ -201,8 +209,14 @@ interface AppState {
    * Lastik bir "ayar" gibi görünse de aslında ARACIN verisi: hız/mesafe
    * düzeltmesi, aktarma oranı ve tork tahmini ona dayanıyor. Bu yüzden
    * profilin içinde tutuluyor ve analiz katmanına profil olarak geçiyor.
+   *
+   * Profil kullanıcıya sorulmuyor: bağlanınca okunan VIN'den çıkıyor ve
+   * kalıcı. VIN okunamayan bir bağlantı son bilinen profili değiştirmez —
+   * tek seferlik bir zaman aşımı yüzünden MINI kodlarının kaybolmaması için.
    */
   vehicle: VehicleProfile;
+  /** Kullanıcının seçtiği lastik; profil değişince yeni profile taşınıyor. */
+  fittedTyreChoice: TyreSize | null;
   tyreError: string | null;
   loadSettings: () => Promise<void>;
   setFittedTyre: (tyre: TyreSize) => Promise<void>;
@@ -488,7 +502,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  vehicle: MINI_R50,
+  vehicle: GENERIC_VEHICLE,
+  fittedTyreChoice: null,
   tyreError: null,
 
   soundMeterOn: false,
@@ -604,10 +619,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadSettings: async () => {
     try {
       const raw = await repo.getSetting('fitted_tyre');
-      if (raw) {
-        const tyre = parseTyreSize(raw);
-        if (tyre) set({ vehicle: withFittedTyre(get().vehicle, tyre) });
-      }
+      const tyre = raw ? parseTyreSize(raw) : null;
+      const savedProfile = await repo.getSetting(VEHICLE_PROFILE_KEY);
+      const id = isProfileId(savedProfile) ? savedProfile : get().vehicle.id;
+      set({ fittedTyreChoice: tyre, vehicle: vehicleFor(id, tyre) });
       const cal = await repo.getSetting('spl_calibration_db');
       if (cal) set({ splCalibrationDb: clampCalibration(Number(cal)) });
 
@@ -632,7 +647,7 @@ export const useAppStore = create<AppState>((set, get) => ({
    * oturum boyunca geçerli kalıyor.
    */
   setFittedTyre: async (tyre: TyreSize) => {
-    set({ vehicle: withFittedTyre(get().vehicle, tyre), tyreError: null });
+    set({ fittedTyreChoice: tyre, vehicle: vehicleFor(get().vehicle.id, tyre), tyreError: null });
     try {
       await repo.setSetting('fitted_tyre', formatTyreSize(tyre));
     } catch (e) {
@@ -678,7 +693,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       for (const kind of ['stored', 'pending', 'permanent'] as DtcKind[]) {
         try {
           const raw = await queue.send(DTC_MODES[kind].command);
-          groups[kind] = parseDtcResponse(raw, kind);
+          groups[kind] = parseDtcResponse(raw, kind, get().vehicle.id);
         } catch (e) {
           appendLog(set, {
             ts: Date.now(),
@@ -777,7 +792,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
 
-      await runInitSequence(queue, set);
+      await runInitSequence(queue, set, get);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       set({ connectError: message });
@@ -820,7 +835,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       await transport.connectWithManualProfile(profile);
       set({ bleProfileLabel: profile.label, bleCandidates: null });
       appendLog(set, { ts: Date.now(), direction: 'info', text: `GATT profile: ${profile.label}` });
-      await runInitSequence(queue, set);
+      await runInitSequence(queue, set, get);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       set({ connectError: message });
@@ -1188,6 +1203,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 async function runInitSequence(
   queue: CommandQueue,
   set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
+  get: () => AppState,
 ): Promise<void> {
   const initResult = await initElm327(queue);
   set({ initResult });
@@ -1195,6 +1211,36 @@ async function runInitSequence(
     ts: Date.now(),
     direction: 'info',
     text: `Ready. Protocol #${initResult.protocolNumber}, adapter: ${initResult.adapterInfo}`,
+  });
+  identifyVehicle(initResult.vin, set, get);
+}
+
+const VEHICLE_PROFILE_KEY = 'vehicle_profile';
+
+function isProfileId(value: string | null): value is VehicleProfileId {
+  return value !== null && value in VEHICLE_PROFILES;
+}
+
+/**
+ * VIN'den profili seçer ve kalıcı yapar.
+ *
+ * VIN yoksa hiçbir şey değişmiyor: eski araçların bir kısmı Mode 09'a hiç
+ * cevap vermiyor, bir kısmı bazen zaman aşımına düşüyor. İkinci durumda
+ * profili jeneriğe düşürmek MINI kodlarını sessizce kaybettirirdi.
+ */
+function identifyVehicle(
+  vin: string | null,
+  set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
+  get: () => AppState,
+): void {
+  const id = profileForVin(vin);
+  if (id === null || id === get().vehicle.id) return;
+  set({ vehicle: vehicleFor(id, get().fittedTyreChoice), dtcGroups: null });
+  void repo.setSetting(VEHICLE_PROFILE_KEY, id).catch(() => undefined);
+  appendLog(set, {
+    ts: Date.now(),
+    direction: 'info',
+    text: `Vehicle profile from VIN: ${VEHICLE_PROFILES[id].name}`,
   });
 }
 

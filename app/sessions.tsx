@@ -19,7 +19,7 @@ import { runDiagnostics, type Finding } from '../src/analysis/diagnostics';
 import { buildReportHtml } from '../src/report/html';
 import { analyseTrend } from '../src/analysis/trend';
 import { VITAL_META } from '../src/analysis/vitals';
-import { profileAssumptions } from '../src/analysis/vehicle';
+import { profileAssumptions, profileForVin, vehicleFor } from '../src/analysis/vehicle';
 import { decodeVin } from '../src/obd/vin';
 import { JS_BUILD_TAG } from '../src/ui/buildTag';
 import { useAppStore } from '../src/state/store';
@@ -40,6 +40,20 @@ export default function TripsScreen() {
   const [openId, setOpenId] = useState<number | null>(null);
   // Araç profili (takılı lastik dahil) analizlerin girdisi.
   const vehicle = useAppStore((s) => s.vehicle);
+  const fittedTyreChoice = useAppStore((s) => s.fittedTyreChoice);
+
+  /**
+   * Bir trip, KAYDEDİLDİĞİ aracın profiliyle analiz ediliyor: VIN'i varsa
+   * profil ondan, yoksa şu anki profil. Aynı telefon iki araçta
+   * kullanıldığında bir aracın gezisi diğerinin eşikleriyle okunmasın.
+   */
+  const vehicleOf = useCallback(
+    (session: Session) => {
+      const id = profileForVin(session.vin);
+      return id ? vehicleFor(id, fittedTyreChoice) : vehicle;
+    },
+    [vehicle, fittedTyreChoice],
+  );
 
   const reload = useCallback(async () => {
     setSessions(await repo.listSessions());
@@ -62,6 +76,7 @@ export default function TripsScreen() {
   const analyze = useCallback(
     async (session: Session) => {
     setBusyId(session.id);
+    const sessionVehicle = vehicleOf(session);
     // Uzun bir oturumun analizi tek adımda çöktüğünde hangi adımda olduğunu
     // bilmek şart; her adım çökme kaydına iz bırakıyor.
     breadcrumb(`analyze session ${session.id}: read`);
@@ -70,10 +85,10 @@ export default function TripsScreen() {
       breadcrumb(`analyze session ${session.id}: ${samples.length} samples read, grouping`);
       const series = groupSeries(samples);
       breadcrumb(`analyze session ${session.id}: summarize`);
-      setSummaries((prev) => ({ ...prev, [session.id]: summarizeTrip(series, vehicle) }));
+      setSummaries((prev) => ({ ...prev, [session.id]: summarizeTrip(series, sessionVehicle) }));
       // Teşhisler de aynı serilerden, aynı anda: iki kez DB okumaya gerek yok.
       breadcrumb(`analyze session ${session.id}: diagnostics`);
-      setFindings((prev) => ({ ...prev, [session.id]: runDiagnostics(series, vehicle) }));
+      setFindings((prev) => ({ ...prev, [session.id]: runDiagnostics(series, sessionVehicle) }));
       setSeriesById((prev) => ({ ...prev, [session.id]: series }));
       breadcrumb(`analyze session ${session.id}: done`);
     } catch (e) {
@@ -84,7 +99,7 @@ export default function TripsScreen() {
       setBusyId(null);
     }
     },
-    [vehicle],
+    [vehicleOf],
   );
 
   const exportCsv = useCallback(async (session: Session) => {
@@ -117,6 +132,7 @@ export default function TripsScreen() {
   const exportReport = useCallback(
     async (session: Session) => {
       setBusyId(session.id);
+      const sessionVehicle = vehicleOf(session);
       breadcrumb(`report session ${session.id}: read`);
       try {
         const samples = await repo.readSamples(session.id);
@@ -147,17 +163,17 @@ export default function TripsScreen() {
           startedAt: session.startedAt,
           durationSec: session.endedAt ? (session.endedAt - session.startedAt) / 1000 : 0,
           vehicle: {
-            profileName: vehicle.name,
+            profileName: sessionVehicle.name,
             vin: session.vin,
             // VIN'den yalnızca yapısının garanti ettiği kadarı çıkarılıyor;
             // model ve motor üretici tablosu ister, elimizde yok.
             manufacturer: session.vin ? (decodeVin(session.vin)?.manufacturer ?? null) : null,
             modelYear: session.vin ? (decodeVin(session.vin)?.modelYear ?? null) : null,
-            assumptions: profileAssumptions(vehicle),
+            assumptions: profileAssumptions(sessionVehicle),
           },
           buildTag: JS_BUILD_TAG,
-          summary: summarizeTrip(series, vehicle),
-          findings: runDiagnostics(series, vehicle),
+          summary: summarizeTrip(series, sessionVehicle),
+          findings: runDiagnostics(series, sessionVehicle),
           vitals,
           skippedSteps: await repo.readSkippedSteps(session.id),
         });
@@ -177,7 +193,7 @@ export default function TripsScreen() {
         setBusyId(null);
       }
     },
-    [vehicle],
+    [vehicleOf],
   );
 
   const exportLog = useCallback(async (session: Session) => {

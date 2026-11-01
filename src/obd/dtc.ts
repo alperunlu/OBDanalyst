@@ -13,7 +13,8 @@
  */
 
 import { splitResponseLines } from './elm327';
-import { lookupMiniDtc } from './dtcMini';
+import { lookupMiniDtc, type MiniDtcEntry } from './dtcMini';
+import type { VehicleProfileId } from '../analysis/vehicle';
 
 export type DtcKind = 'stored' | 'pending' | 'permanent';
 
@@ -65,7 +66,11 @@ export function decodeDtcBytes(a: number, b: number): string {
  *
  * `00 00` çiftleri dolgudur, kod değildir — atılır.
  */
-export function parseDtcResponse(raw: string, kind: DtcKind): Dtc[] {
+export function parseDtcResponse(
+  raw: string,
+  kind: DtcKind,
+  profile: VehicleProfileId = 'generic',
+): Dtc[] {
   const prefix = DTC_MODES[kind].responsePrefix;
   const codes: string[] = [];
 
@@ -94,11 +99,11 @@ export function parseDtcResponse(raw: string, kind: DtcKind): Dtc[] {
   // Çoklu ECU aynı kodu iki kez bildirebilir.
   const unique = [...new Set(codes)];
   return unique.map((code) => {
-    const mini = lookupMiniDtc(code);
+    const mini = lookupVehicleDtc(code, profile);
     return {
       code,
       kind,
-      description: mini?.text ?? describeDtc(code),
+      description: mini?.text ?? describeDtc(code, profile),
       miniFaultCode: mini?.fc ?? null,
       vehicleSpecific: mini !== undefined,
     };
@@ -256,12 +261,24 @@ const DESCRIPTIONS: Readonly<Record<string, string>> = {
 };
 
 /**
- * Açıklama arar: önce araca özel tablo (R50'nin kendi servis verisi), sonra
- * jenerik SAE tablosu. Araca özel tablo P1xxx kodlarını da kapsadığı için
- * "üretici-özel, açıklama yok" durumu R50'de neredeyse hiç oluşmuyor.
+ * Araca özel kod tablosu — yalnızca o aracın profilinde.
+ *
+ * P1xxx gibi üretici kodlarının anlamı markadan markaya değişiyor. R50
+ * tablosunu her araca uygulamak bir Ford'un P1xxx kodunu MINI'nin
+ * açıklamasıyla göstermek demekti; jenerik araçta tablo hiç sorulmuyor.
  */
-export function describeDtc(code: string): string | null {
-  const mini = lookupMiniDtc(code);
+function lookupVehicleDtc(code: string, profile: VehicleProfileId): MiniDtcEntry | undefined {
+  return profile === 'mini_r50' ? lookupMiniDtc(code) : undefined;
+}
+
+/**
+ * Açıklama arar: önce araca özel tablo (R50 profilinde R50'nin kendi servis
+ * verisi), sonra jenerik SAE tablosu. Araca özel tablo P1xxx kodlarını da
+ * kapsadığı için "üretici-özel, açıklama yok" durumu R50'de neredeyse hiç
+ * oluşmuyor; jenerik araçta P1xxx için dürüst cevap "açıklama yok".
+ */
+export function describeDtc(code: string, profile: VehicleProfileId = 'generic'): string | null {
+  const mini = lookupVehicleDtc(code, profile);
   if (mini) return mini.text;
   return DESCRIPTIONS[code.toUpperCase()] ?? null;
 }

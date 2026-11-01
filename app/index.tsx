@@ -32,7 +32,7 @@ import {
   rollingCircumferenceMm,
   revsPerKm,
   sameTyreSize,
-  TYRE_OPTIONS,
+  tyreOptionsFor,
 } from '../src/analysis/tyre';
 import type { TyreSize } from '../src/analysis/vehicle';
 import { decodeVin } from '../src/obd/vin';
@@ -271,6 +271,11 @@ export default function LinkScreen() {
             <Fact label="Adapter" value={initResult.adapterInfo} />
             <Fact label="Device" value={selectedDeviceName ?? selectedDeviceId ?? '—'} />
             {/*
+              Profil seçilmiyor, VIN'den çıkıyor — bu satır kararın görünür
+              hali. VIN okunamadıysa son bilinen profil geçerli kalıyor.
+            */}
+            <Fact label="Vehicle profile" value={vehicle.name} />
+            {/*
               VIN burada duruyor çünkü bu ekranın işi "neye bağlıyım"
               sorusunu cevaplamak, ve VIN o cevabın en kesin parçası:
               adaptör markası değişebilir, araba değişmez.
@@ -308,34 +313,38 @@ export default function LinkScreen() {
           seçtiği şeyin okumaları ne kadar değiştireceğini o anda görüyor.
         */}
         <View style={{ marginTop: space(8) }}>
-          <SectionRule label="Tyres" meta={formatTyreSize(vehicle.fittedTyre)} />
+          <SectionRule
+            label="Tyres"
+            meta={vehicle.fittedTyre ? formatTyreSize(vehicle.fittedTyre) : 'Not set'}
+          />
           <Note>
-            The ECU computes speed from wheel revolutions using the factory size
-            ({formatTyreSize(vehicle.factoryTyre)}). Telling the app what is actually fitted
-            corrects speed and distance, and unlocks the drive-ratio and rolling-circumference
-            checks.
+            {vehicle.factoryTyre
+              ? `The ECU computes speed from wheel revolutions using the factory size (${formatTyreSize(vehicle.factoryTyre)}). Telling the app what is actually fitted corrects speed and distance, and unlocks the drive-ratio and rolling-circumference checks.`
+              : 'Pick the size printed on the tyre sidewall. It unlocks the drive-ratio, torque and rolling-circumference checks. The factory size of this vehicle is not known, so speed is not corrected.'}
           </Note>
 
           <Tap style={styles.tyreSelect} onPress={() => setTyreOpen((v) => !v)}>
             <View style={{ flex: 1 }}>
-              <Text style={[type.prose, { color: color.ink }]}>
-                {formatTyreSize(vehicle.fittedTyre)}
+              <Text style={[type.prose, { color: vehicle.fittedTyre ? color.ink : color.chrome }]}>
+                {vehicle.fittedTyre ? formatTyreSize(vehicle.fittedTyre) : 'Choose tyre size'}
               </Text>
-              <Text style={[type.metaSmall, { marginTop: space(0.75) }]}>
-                {`${Math.round(rollingCircumferenceMm(vehicle.fittedTyre))} mm rolling circumference · ${Math.round(revsPerKm(vehicle.fittedTyre))} revs/km`}
-              </Text>
+              {vehicle.fittedTyre ? (
+                <Text style={[type.metaSmall, { marginTop: space(0.75) }]}>
+                  {`${Math.round(rollingCircumferenceMm(vehicle.fittedTyre))} mm rolling circumference · ${Math.round(revsPerKm(vehicle.fittedTyre))} revs/km`}
+                </Text>
+              ) : null}
             </View>
             <Chevron open={tyreOpen} />
           </Tap>
 
           {tyreOpen && (
             <View style={styles.tyreList}>
-              {TYRE_OPTIONS.map((option) => (
+              {tyreOptionsFor(vehicle).map((option) => (
                 <TyreOption
                   key={formatTyreSize(option)}
                   option={option}
                   factory={vehicle.factoryTyre}
-                  selected={sameTyreSize(option, vehicle.fittedTyre)}
+                  selected={vehicle.fittedTyre !== null && sameTyreSize(option, vehicle.fittedTyre)}
                   onPick={() => {
                     void setFittedTyre(option);
                     setTyreOpen(false);
@@ -560,13 +569,15 @@ function TyreOption({
   onPick,
 }: {
   option: TyreSize;
-  factory: TyreSize;
+  /** Fabrika ebadı bilinmiyorsa sapma sütunu gösterilmiyor. */
+  factory: TyreSize | null;
   selected: boolean;
   onPick: () => void;
 }) {
-  const deviation =
-    (rollingCircumferenceMm(option) / rollingCircumferenceMm(factory) - 1) * 100;
-  const isFactory = sameTyreSize(option, factory);
+  const deviation = factory
+    ? (rollingCircumferenceMm(option) / rollingCircumferenceMm(factory) - 1) * 100
+    : null;
+  const isFactory = factory !== null && sameTyreSize(option, factory);
 
   return (
     <Tap style={styles.tyreOption} onPress={onPick} highlight>
@@ -580,14 +591,16 @@ function TyreOption({
           {`${Math.round(rollingCircumferenceMm(option))} mm${isFactory ? ' · factory size' : ''}`}
         </Text>
       </View>
-      <Text
-        style={[
-          type.metaSmall,
-          { color: Math.abs(deviation) < 0.5 ? color.muted : color.caution },
-        ]}
-      >
-        {`${deviation > 0 ? '+' : ''}${deviation.toFixed(1)} %`}
-      </Text>
+      {deviation !== null ? (
+        <Text
+          style={[
+            type.metaSmall,
+            { color: Math.abs(deviation) < 0.5 ? color.muted : color.caution },
+          ]}
+        >
+          {`${deviation > 0 ? '+' : ''}${deviation.toFixed(1)} %`}
+        </Text>
+      ) : null}
     </Tap>
   );
 }

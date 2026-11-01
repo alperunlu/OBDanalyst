@@ -17,7 +17,7 @@
 
 import type { SeriesMap, TimeSeriesPoint } from './derived';
 import { idleSamples, idleStabilityRpm, valueAtOrBefore } from './derived';
-import { MINI_R50, type VehicleProfile } from './vehicle';
+import { GENERIC_VEHICLE, type VehicleProfile } from './vehicle';
 
 /** Bir cycle adımının kayıt içindeki zaman aralığı (ms, oturum başına göre). */
 export interface StepWindow {
@@ -123,7 +123,7 @@ function spanSeconds(window: StepWindow): number {
 export function extractVitals(
   series: SeriesMap,
   windows: readonly StepWindow[],
-  vehicle: VehicleProfile = MINI_R50,
+  vehicle: VehicleProfile = GENERIC_VEHICLE,
 ): Vital[] {
   const out: Vital[] = [];
   const step = (id: string) => windows.find((w) => w.stepId === id && !w.skipped);
@@ -345,7 +345,7 @@ function driveWindowSpecs(vehicle: VehicleProfile): readonly WindowSpec[] {
  */
 export function detectWindows(
   series: SeriesMap,
-  vehicle: VehicleProfile = MINI_R50,
+  vehicle: VehicleProfile = GENERIC_VEHICLE,
 ): StepWindow[] {
   const clock = series['0C'] ?? [];
   if (clock.length < 2) return [];

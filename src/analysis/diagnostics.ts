@@ -22,7 +22,7 @@
 
 import { maxOf } from '../util/agg';
 import { idleSamples, idleStabilityRpm, type SeriesMap, type TimeSeriesPoint } from './derived';
-import { MINI_R50, type VehicleProfile } from './vehicle';
+import { GENERIC_VEHICLE, ecuTyre, type VehicleProfile } from './vehicle';
 import {
   rollingCircumferenceMm,
   circumferenceFromSpeedPair,
@@ -558,7 +558,7 @@ export function fuelTrimByLoad(series: SeriesMap): Finding {
  * yakıt tüketimi artar, kalorifer üflemez, P0128 gelir. İmza: soğutma suyu
  * yükselir ama profildeki açma sıcaklığının belirgin altında platoya oturur.
  */
-export function thermostatCheck(series: SeriesMap, vehicle: VehicleProfile = MINI_R50): Finding {
+export function thermostatCheck(series: SeriesMap, vehicle: VehicleProfile = GENERIC_VEHICLE): Finding {
   const key = 'thermostat';
   const title = 'Thermostat / warm-up';
   const coolant = get(series, '05');
@@ -833,7 +833,7 @@ export function clutchSlip(series: SeriesMap): Finding {
  * ivmeölçeri ve mikrofonu tabloyu tamamlıyor: devir oynuyor + titreşim
  * yüksek → yanma sorunu; devir düz + titreşim yüksek → mekanik (takoz).
  */
-export function idleQuality(series: SeriesMap, vehicle: VehicleProfile = MINI_R50): Finding {
+export function idleQuality(series: SeriesMap, vehicle: VehicleProfile = GENERIC_VEHICLE): Finding {
   const key = 'idle';
   const title = 'Idle quality';
   const rpm = get(series, '0C');
@@ -1212,7 +1212,7 @@ export function orderTrackingQuality(series: SeriesMap): Finding {
  * Ortam basıncı 0133 PID'iyle okunamıyor (R50 desteklemiyor); GPS rakımından
  * tahmin ediliyor, rakım yoksa deniz seviyesi varsayılıyor.
  */
-export function idleManifoldVacuum(series: SeriesMap, vehicle: VehicleProfile = MINI_R50): Finding {
+export function idleManifoldVacuum(series: SeriesMap, vehicle: VehicleProfile = GENERIC_VEHICLE): Finding {
   const key = 'vacuum';
   const title = 'Idle manifold vacuum';
   const map = get(series, '0B');
@@ -1299,7 +1299,9 @@ function measuredCircumference(
 ): { mm: number; samples: number } | null {
   const obd = get(series, '0D');
   const gps = get(series, 'gps_speed');
-  if (obd.length < 10 || gps.length < 10) return null;
+  // ECU'nun hız hesabında varsaydığı ebat; hiçbir ebat bilinmiyorsa ölçüm yok.
+  const assumed = ecuTyre(vehicle);
+  if (obd.length < 10 || gps.length < 10 || assumed === null) return null;
 
   /**
    * Yalnızca hızın gerçekten sabit olduğu anlar.
@@ -1325,16 +1327,19 @@ function measuredCircumference(
 
     const o = sampleAt(obd, g.ts, CO_TIMED_MS);
     if (o === null) continue;
-    const c = circumferenceFromSpeedPair(o, g.value, vehicle.factoryTyre);
+    const c = circumferenceFromSpeedPair(o, g.value, assumed);
     if (c !== null) values.push(c);
   }
   if (values.length < 10) return null;
   return { mm: median(values) as number, samples: values.length };
 }
 
+/** Lastik ebadı girilmemiş jenerik araçta lastiğe dayanan kontrollerin cevabı. */
+const NEEDS_TYRE_SIZE = 'Needs the tyre size — set it under Tyres on the Link screen.';
+
 export function tyreCircumferenceCheck(
   series: SeriesMap,
-  vehicle: VehicleProfile = MINI_R50,
+  vehicle: VehicleProfile = GENERIC_VEHICLE,
 ): Finding {
   const key = 'tyre_circumference';
   const title = 'Rolling circumference';
@@ -1349,6 +1354,11 @@ export function tyreCircumferenceCheck(
       'Needs both ECU speed and GPS speed — the ratio between them is the measurement.');
   }
 
+  const fitted = vehicle.fittedTyre;
+  if (fitted === null) {
+    return inconclusive(key, title, [], NEEDS_TYRE_SIZE);
+  }
+
   const measurement = measuredCircumference(series, vehicle);
   if (measurement === null) {
     return inconclusive(key, title, [],
@@ -1357,9 +1367,9 @@ export function tyreCircumferenceCheck(
 
   const actual = measurement.mm;
   const measured = { length: measurement.samples };
-  const nominal = rollingCircumferenceMm(vehicle.fittedTyre);
+  const nominal = rollingCircumferenceMm(fitted);
   const deviation = ((actual - nominal) / nominal) * 100;
-  const evidence = `measured ${Math.round(actual)} mm vs ${Math.round(nominal)} mm nominal for ${formatTyreSize(vehicle.fittedTyre)} (${round(deviation)} %), ${measured.length} samples`;
+  const evidence = `measured ${Math.round(actual)} mm vs ${Math.round(nominal)} mm nominal for ${formatTyreSize(fitted)} (${round(deviation)} %), ${measured.length} samples`;
 
   if (deviation < -2.5) {
     return {
@@ -1403,7 +1413,7 @@ export function tyreCircumferenceCheck(
  */
 export function driveRatioStability(
   series: SeriesMap,
-  vehicle: VehicleProfile = MINI_R50,
+  vehicle: VehicleProfile = GENERIC_VEHICLE,
 ): Finding {
   const key = 'drive_ratio';
   const title = 'Drive ratio stability';
@@ -1417,6 +1427,9 @@ export function driveRatioStability(
     return inconclusive(key, title, needs, 'Needs engine speed and road speed together.');
   }
 
+  if (vehicle.fittedTyre === null) {
+    return inconclusive(key, title, [], NEEDS_TYRE_SIZE);
+  }
   const circumference = rollingCircumferenceMm(vehicle.fittedTyre);
   /**
    * Yalnızca eş zamanlı VE kararlı anlar. Eskiden devir, 1.5 saniyeye
@@ -1503,7 +1516,7 @@ export function driveRatioStability(
  */
 export function tyreSizeCalibration(
   series: SeriesMap,
-  vehicle: VehicleProfile = MINI_R50,
+  vehicle: VehicleProfile = GENERIC_VEHICLE,
 ): Finding {
   const key = 'tyre_calibration';
   const title = 'Speed calibration';
@@ -1511,17 +1524,25 @@ export function tyreSizeCalibration(
   // Ölçüm > tahmin. GPS ile ECU hızı birlikte kaydedildiyse düzeltme
   // katsayısı girilen ebattan değil, tekerleğin gerçekte kat ettiği
   // yoldan çıkar; lastik aşınması ve basınç da böyle hesaba girer.
+  // Fabrika ebadı bilinmeyen bir araçta ECU'nun neye göre kalibre olduğu
+  // da bilinmiyor; "hız şu kadar sapıyor" demek uydurmak olurdu.
+  const factory = vehicle.factoryTyre;
+  const fitted = vehicle.fittedTyre;
+  if (factory === null || fitted === null) {
+    return inconclusive(key, title, [],
+      'The factory tyre size for this vehicle is not known, so the speed error cannot be worked out.');
+  }
   const measurement = measuredCircumference(series, vehicle);
-  const factoryMm = rollingCircumferenceMm(vehicle.factoryTyre);
+  const factoryMm = rollingCircumferenceMm(factory);
   const factor =
     measurement !== null
       ? measurement.mm / factoryMm
-      : speedCorrectionFactor(vehicle.fittedTyre, vehicle.factoryTyre);
+      : speedCorrectionFactor(fitted, factory);
   const errorPct = (factor - 1) * 100;
   const evidence =
     measurement !== null
       ? `measured rolling circumference ${Math.round(measurement.mm)} mm vs ${Math.round(factoryMm)} mm factory — ECU speed off by ${round(-errorPct)} % (${measurement.samples} GPS samples)`
-      : `fitted ${formatTyreSize(vehicle.fittedTyre)}, factory ${formatTyreSize(vehicle.factoryTyre)} — ECU speed off by ${round(-errorPct)} % (from the entered size; record GPS to measure it)`;
+      : `fitted ${formatTyreSize(fitted)}, factory ${formatTyreSize(factory)} — ECU speed off by ${round(-errorPct)} % (from the entered size; record GPS to measure it)`;
 
   /**
    * "Fabrikayla aynı" bandı, LASTİK EBADI DIŞINDAKİ açıklamaları kapsamalı.
@@ -1659,7 +1680,7 @@ function voltsWhileStopped(series: SeriesMap): number[] {
  * (aşınmış kömür, kayan kayış) seyirde yeterli basar ama rölantide düşer —
  * tek bir ortalama bunu gizler, iki koşulun farkı gösterir.
  */
-export function chargingSystem(series: SeriesMap, vehicle: VehicleProfile = MINI_R50): Finding {
+export function chargingSystem(series: SeriesMap, vehicle: VehicleProfile = GENERIC_VEHICLE): Finding {
   const key = 'charging';
   const title = 'Charging system';
 
@@ -1814,7 +1835,7 @@ export function batteryState(series: SeriesMap): Finding {
  * verilemeyenler. Kullanıcı ekranı yukarıdan aşağı okuyunca önce
  * bakması gerekeni görüyor.
  */
-export function runDiagnostics(series: SeriesMap, vehicle: VehicleProfile = MINI_R50): Finding[] {
+export function runDiagnostics(series: SeriesMap, vehicle: VehicleProfile = GENERIC_VEHICLE): Finding[] {
   const findings: Finding[] = [
     fuelTrimByLoad(series),
     idleManifoldVacuum(series, vehicle),

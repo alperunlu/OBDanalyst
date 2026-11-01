@@ -1,16 +1,23 @@
 /**
  * Araç profili — türetilmiş metriklerin dayandığı fiziksel sabitler.
  *
- * Bu dosya, projenin "ileride MINI R50 için özelleştirilecek" hedefinin
- * somut karşılığı: motor hacmi, kütle, aerodinamik katsayılar burada tek
- * yerde toplanıyor. Başka bir araç eklemek yeni bir profil yazmak demek;
- * hesap kodunun hiçbiri değişmiyor.
+ * İki profil var:
  *
- * Değerler MINI Cooper R50 (W10B16, 2001-2006) için yayımlanmış tipik
- * spesifikasyonlardır. Kütle sürücü + yakıt dahil tahmindir ve tork/güç
- * tahmininin doğruluğunu doğrudan etkiler — kesin ölçüm isteyen biri
- * kendi aracını tartıp burayı güncellemeli.
+ *   - GENERIC_VEHICLE (varsayılan): hiçbir araca ait sayı içermez. Eşikler
+ *     çoğu benzinli araçta geçerli geniş aralıklar; kütle, motor hacmi,
+ *     aerodinamik ve fabrika lastiği BİLİNMİYOR (`null`), dolayısıyla onlara
+ *     dayanan güç/tork/hava kütlesi tahminleri yapılmıyor. Uydurma bir sayıyla
+ *     hesap yapmaktansa hesap yapmamak.
+ *   - MINI_R50: MINI Cooper R50 (W10B16, 2001-2006) için yayımlanmış tipik
+ *     spesifikasyonlar. Kütle sürücü + yakıt dahil tahmindir ve tork/güç
+ *     tahmininin doğruluğunu doğrudan etkiler.
+ *
+ * Profil kullanıcıya sorulmuyor: VIN'den çıkarılıyor (`profileForVin`).
+ * Uygulama mağazada herkese açık; MINI'ye ait eşikleri ve arıza kodu
+ * açıklamalarını başka bir araca uygulamak yanlış teşhis demekti.
  */
+
+import { decodeVin } from '../obd/vin';
 
 /** Lastik ebadı — aracın verisi olduğu için profil dosyasında tanımlı. */
 export interface TyreSize {
@@ -22,8 +29,14 @@ export interface TyreSize {
   readonly rimInch: number;
 }
 
-export interface VehicleProfile {
-  readonly name: string;
+export type VehicleProfileId = 'generic' | 'mini_r50';
+
+/**
+ * Araca ait fizik verisi. Bilinmeyen bir araçta bunların hiçbiri tahmin
+ * edilmiyor — profilde `physics: null` duruyor ve ona dayanan hesaplar
+ * `null` dönüyor.
+ */
+export interface VehiclePhysics {
   /** Motor hacmi (litre). */
   readonly displacementL: number;
   /** Sürücü + yakıt dahil çalışma kütlesi (kg). */
@@ -34,7 +47,17 @@ export interface VehicleProfile {
   readonly frontalAreaM2: number;
   /** Yuvarlanma direnci katsayısı (asfalt, normal lastik). */
   readonly rollingResistance: number;
-  /** Rölanti devri (RPM) — rölanti kalitesi analizinde referans. */
+}
+
+export interface VehicleProfile {
+  readonly id: VehicleProfileId;
+  readonly name: string;
+  /** Kütle, motor hacmi, aerodinamik — bilinmiyorsa `null`. */
+  readonly physics: VehiclePhysics | null;
+  /**
+   * Rölanti devri (RPM). Mutlak bir hedef olarak değil, "bu örnek rölantide
+   * mi" kapısı olarak kullanılıyor (eşik bunun 1.4-1.6 katı).
+   */
   readonly idleRpm: number;
   /** Termostatın açması beklenen sıcaklık (°C). */
   readonly thermostatOpenC: number;
@@ -50,25 +73,52 @@ export interface VehicleProfile {
   readonly chargingVoltageV: { readonly min: number; readonly max: number };
   /**
    * ECU'nun hız/mesafe hesabında varsaydığı FABRİKA lastik ebadı.
-   * Araca ait sabit bir değer; kullanıcı değiştirmez.
+   * Araca ait sabit bir değer; kullanıcı değiştirmez. Bilinmeyen araçta
+   * `null` — o zaman hız düzeltmesi yapılmaz (bkz. `ecuTyre`).
    */
-  readonly factoryTyre: TyreSize;
+  readonly factoryTyre: TyreSize | null;
   /**
-   * Fiilen takılı lastik. Varsayılan olarak fabrika ebadı; kullanıcı
-   * kendi ebadını girdiğinde bu alan değişir ve hız/mesafe düzeltmesi,
-   * aktarma oranı ve tork tahmini bu değere dayanır.
+   * Fiilen takılı lastik. R50'de varsayılan fabrika ebadı; jenerik araçta
+   * kullanıcı seçene kadar `null`. Aktarma oranı, tork tahmini ve yuvarlanma
+   * çevresi kontrolleri bu değere dayanır.
    */
-  readonly fittedTyre: TyreSize;
+  readonly fittedTyre: TyreSize | null;
 }
+
+/**
+ * Bilinmeyen araç. Eşikler bilinçli olarak geniş: yanlış alarm, kaçırılan
+ * bir sinyalden daha zararlı, çünkü kullanıcıyı uygulamaya güvenmemeye
+ * alıştırıyor.
+ */
+export const GENERIC_VEHICLE: VehicleProfile = {
+  id: 'generic',
+  name: 'Generic OBD-II vehicle',
+  physics: null,
+  // Yalnızca "rölantide mi" kapısı: 800 × 1.6 = 1280 rpm, çoğu benzinlinin
+  // sıcak ve soğuk rölantisini kapsıyor.
+  idleRpm: 800,
+  // Termostatlar 80-95 °C arası açıyor; en düşüğü alınıyor ki "hiç ısınmadı"
+  // bulgusu yalnızca gerçekten ısınmayan motorda çıksın.
+  thermostatOpenC: 80,
+  normalCoolantC: 90,
+  // Akıllı alternatörler aküyü dolu görünce şarjı ~12.8 V'a kadar kısıyor;
+  // alt sınır bunun altı. Üst sınır aşırı şarjın başladığı yer.
+  chargingVoltageV: { min: 12.8, max: 15.0 },
+  factoryTyre: null,
+  fittedTyre: null,
+};
 
 /** MINI Cooper R50 (2001-2006, W10B16 1.6L). */
 export const MINI_R50: VehicleProfile = {
+  id: 'mini_r50',
   name: 'MINI Cooper R50 (2001-2006)',
-  displacementL: 1.598,
-  massKg: 1215, // ~1140 kg boş + sürücü + yakıt
-  dragCoefficient: 0.35,
-  frontalAreaM2: 1.97,
-  rollingResistance: 0.013,
+  physics: {
+    displacementL: 1.598,
+    massKg: 1215, // ~1140 kg boş + sürücü + yakıt
+    dragCoefficient: 0.35,
+    frontalAreaM2: 1.97,
+    rollingResistance: 0.013,
+  },
   idleRpm: 850,
   thermostatOpenC: 88,
   normalCoolantC: 95,
@@ -81,9 +131,45 @@ export const MINI_R50: VehicleProfile = {
   fittedTyre: { widthMm: 175, aspectRatio: 65, rimInch: 15 },
 };
 
-/** Profili farklı bir takılı lastikle kopyalar. */
-export function withFittedTyre(vehicle: VehicleProfile, tyre: TyreSize): VehicleProfile {
-  return { ...vehicle, fittedTyre: tyre };
+export const VEHICLE_PROFILES: Readonly<Record<VehicleProfileId, VehicleProfile>> = {
+  generic: GENERIC_VEHICLE,
+  mini_r50: MINI_R50,
+};
+
+/**
+ * Profil + kullanıcının seçtiği lastik. Seçim yoksa profilin fabrika ebadı
+ * (jenerikte o da yok, `null` kalır).
+ */
+export function vehicleFor(id: VehicleProfileId, fittedTyre: TyreSize | null): VehicleProfile {
+  const base = VEHICLE_PROFILES[id];
+  return { ...base, fittedTyre: fittedTyre ?? base.factoryTyre };
+}
+
+/**
+ * VIN'den profil.
+ *
+ * MINI'nin WMI'si (WMW) ve 2001-2006 model yılı → R50. R50, R52 (cabrio) ve
+ * R53 (Cooper S) aynı nesil; arıza kodu tablosu ve eşikler bu nesil için.
+ * 2007 ve sonrası (R56) farklı motor ve ECU — jenerik kalıyor. VIN yoksa
+ * ya da okunamadıysa `null`: karar çağırana kalıyor (son bilinen profil).
+ */
+export function profileForVin(vin: string | null): VehicleProfileId | null {
+  if (!vin) return null;
+  const info = decodeVin(vin);
+  if (!info) return null;
+  if (info.wmi === 'WMW' && info.modelYear !== null && info.modelYear >= 2001 && info.modelYear <= 2006) {
+    return 'mini_r50';
+  }
+  return 'generic';
+}
+
+/**
+ * ECU'nun hızı hesaplarken varsaydığı ebat. Fabrika ebadı bilinmiyorsa
+ * takılı ebadın fabrika ebadı olduğu varsayılıyor (çoğu araç orijinal
+ * ebatla geziyor) — bu durumda hız düzeltmesi yapılmamış olur.
+ */
+export function ecuTyre(v: VehicleProfile): TyreSize | null {
+  return v.factoryTyre ?? v.fittedTyre;
 }
 
 /** Standart fiziksel sabitler. */
@@ -109,13 +195,18 @@ export const PHYSICS = {
  * sonra keşfetmesinden iyi.
  */
 export function profileAssumptions(v: VehicleProfile): string[] {
+  const p = v.physics;
   const t = v.fittedTyre;
   return [
-    `mass ${v.massKg} kg`,
-    `displacement ${v.displacementL.toFixed(3)} L`,
-    `Cd ${v.dragCoefficient} over ${v.frontalAreaM2} m²`,
-    `rolling resistance ${v.rollingResistance}`,
+    ...(p
+      ? [
+          `mass ${p.massKg} kg`,
+          `displacement ${p.displacementL.toFixed(3)} L`,
+          `Cd ${p.dragCoefficient} over ${p.frontalAreaM2} m²`,
+          `rolling resistance ${p.rollingResistance}`,
+        ]
+      : ['mass, displacement and aerodynamics unknown — power, torque and airflow estimates not computed']),
     `idle ${v.idleRpm} rpm`,
-    `tyres ${t.widthMm}/${t.aspectRatio} R${t.rimInch}`,
+    t ? `tyres ${t.widthMm}/${t.aspectRatio} R${t.rimInch}` : 'tyre size not set',
   ];
 }

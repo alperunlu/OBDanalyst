@@ -519,7 +519,8 @@ function DerivedSection({
   series: Record<string, readonly { ts: number; value: number }[]>;
   isPidSupported: (pid: string) => boolean;
 }) {
-  const readings = deriveLive(series, { isPidSupported });
+  const vehicle = useAppStore((s) => s.vehicle);
+  const readings = deriveLive(series, { isPidSupported, vehicle });
   const available = readings.filter((r) => r.value !== null);
   // Eylem alınabilir: kanal kapalı olduğu için hesaplanamıyor.
   const actionable = readings.filter((r) => r.value === null && r.missing.length > 0);
@@ -528,6 +529,11 @@ function DerivedSection({
   const impossible = readings.filter(
     (r) => r.value === null && r.missing.length === 0 && r.unsupported.length > 0,
   );
+  // Kanallar tamam ama araç tanınmadı: kütle ve motor hacmi bilinmeden bu
+  // tahminler uydurma olurdu. Sessizce boş kalmasın, nedeni yazsın.
+  const needsProfile = vehicle.physics
+    ? []
+    : readings.filter((r) => r.value === null && r.missing.length === 0 && r.unsupported.length === 0);
 
   return (
     <View style={{ marginTop: space(2) }}>
@@ -553,6 +559,13 @@ function DerivedSection({
             .map((r) => `${r.name} (no ${[...new Set(r.unsupported)].join(' / ')})`)
             .join(', ')}
           {'. The ECU does not report the required sensor.'}
+        </Note>
+      )}
+
+      {needsProfile.length > 0 && (
+        <Note>
+          {`Not computed for an unrecognised vehicle: ${needsProfile.map((r) => r.name).join(', ')}. ` +
+            'These need the vehicle mass and engine size.'}
         </Note>
       )}
     </View>

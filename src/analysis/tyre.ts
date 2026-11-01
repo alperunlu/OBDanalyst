@@ -21,7 +21,7 @@
  * Hepsi saf fonksiyon; hiçbiri cihaz gerektirmiyor.
  */
 
-import { MINI_R50, PHYSICS, type TyreSize, type VehicleProfile } from './vehicle';
+import { GENERIC_VEHICLE, PHYSICS, type TyreSize, type VehicleProfile } from './vehicle';
 
 export type { TyreSize };
 
@@ -65,14 +65,15 @@ export function formatTyreSize(t: TyreSize): string {
  *
  * Elle yazdırmak yerine liste sunuluyor: yanlış girilmiş bir ebat, ebadın
  * hiç girilmemiş olmasından daha kötü sonuç üretiyor (mesafe ve tüketim
- * dahil ondan türeyen her şey sessizce kayıyor). Listede yalnızca R50
- * jant çaplarına fiilen takılabilen ölçüler var; hepsi 15-18 inç aralığında.
+ * dahil ondan türeyen her şey sessizce kayıyor). Bu liste R50 profili için:
+ * yalnızca R50 jant çaplarına fiilen takılabilen ölçüler, 15-18 inç.
+ * Jenerik araç `COMMON_TYRE_OPTIONS`'u görüyor (bkz. `tyreOptionsFor`).
  *
  * Sıralama jant çapına, sonra genişliğe göre. Her seçeneğin fabrika
  * ebadına göre sapması UI'da gösteriliyor — kullanıcı seçtiği şeyin
  * hız/mesafe okumasını ne kadar kaydıracağını seçim anında görüyor.
  */
-export const TYRE_OPTIONS: readonly TyreSize[] = [
+export const R50_TYRE_OPTIONS: readonly TyreSize[] = [
   { widthMm: 175, aspectRatio: 65, rimInch: 15 },
   { widthMm: 185, aspectRatio: 60, rimInch: 15 },
   { widthMm: 195, aspectRatio: 55, rimInch: 15 },
@@ -83,6 +84,33 @@ export const TYRE_OPTIONS: readonly TyreSize[] = [
   { widthMm: 215, aspectRatio: 40, rimInch: 17 },
   { widthMm: 205, aspectRatio: 40, rimInch: 18 },
 ];
+
+/**
+ * Binek araçlarda yaygın ebatlar, 13-20 inç — jenerik araç için.
+ *
+ * Tam katalog değil: listede olmayan bir ebat seçmek yerine en yakını
+ * seçmek, ebadı hiç girmemekten iyi sonuç veriyor (çevre farkı genelde
+ * %1'in altında kalıyor).
+ */
+export const COMMON_TYRE_OPTIONS: readonly TyreSize[] = (
+  [
+    [155, 70, 13], [155, 80, 13], [165, 70, 13], [175, 70, 13],
+    [165, 70, 14], [175, 65, 14], [175, 70, 14], [185, 60, 14], [185, 65, 14], [185, 70, 14],
+    [175, 65, 15], [185, 55, 15], [185, 60, 15], [185, 65, 15], [195, 55, 15], [195, 60, 15],
+    [195, 65, 15], [205, 65, 15],
+    [195, 55, 16], [205, 55, 16], [205, 60, 16], [215, 55, 16], [215, 60, 16], [215, 65, 16],
+    [205, 50, 17], [215, 45, 17], [215, 55, 17], [225, 45, 17], [225, 50, 17], [225, 55, 17],
+    [225, 65, 17], [235, 65, 17],
+    [225, 40, 18], [225, 45, 18], [235, 40, 18], [235, 55, 18], [235, 60, 18],
+    [235, 35, 19], [245, 40, 19], [235, 55, 19], [255, 55, 19],
+    [245, 35, 20], [255, 45, 20],
+  ] as const
+).map(([widthMm, aspectRatio, rimInch]) => ({ widthMm, aspectRatio, rimInch }));
+
+/** Profile göre seçilebilir ebatlar. */
+export function tyreOptionsFor(vehicle: VehicleProfile): readonly TyreSize[] {
+  return vehicle.id === 'mini_r50' ? R50_TYRE_OPTIONS : COMMON_TYRE_OPTIONS;
+}
 
 /** İki ebadın aynı olup olmadığı. */
 export function sameTyreSize(a: TyreSize, b: TyreSize): boolean {
@@ -199,8 +227,10 @@ export function roadLoadForceN(input: {
   gradePercent?: number;
   vehicle?: VehicleProfile;
   airDensity?: number;
-}): number {
-  const v = input.vehicle ?? MINI_R50;
+}): number | null {
+  // Kütle ve aerodinamik bilinmiyorsa kuvvet de bilinmiyor.
+  const v = (input.vehicle ?? GENERIC_VEHICLE).physics;
+  if (!v) return null;
   const speedMs = input.speedKmh / 3.6;
   const rho = input.airDensity ?? PHYSICS.airDensitySeaLevel;
   const gradeRatio = (input.gradePercent ?? 0) / 100;

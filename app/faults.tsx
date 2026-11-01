@@ -23,6 +23,7 @@ import { color, type, space, hairlineWidth } from '../src/ui/theme';
 export default function FaultsScreen() {
   const connectionState = useAppStore((s) => s.connectionState);
   const dtcGroups = useAppStore((s) => s.dtcGroups);
+  const vehicleId = useAppStore((s) => s.vehicle.id);
   const milStatus = useAppStore((s) => s.milStatus);
   const readiness = useAppStore((s) => s.readiness);
   const dtcReading = useAppStore((s) => s.dtcReading);
@@ -136,8 +137,17 @@ export default function FaultsScreen() {
 
           {statusLine ? <Text style={[type.meta, styles.hint]}>{statusLine}</Text> : null}
 
+          {/*
+            Kod tablosu notu profile göre: MINI R50 tablosu yalnızca VIN
+            aracı R50 olarak tanıdığında devrede. Jenerik araçta P1xxx gibi
+            üretici kodlarının açıklaması yok — başka bir markanın tablosuyla
+            açıklamak yanlış teşhis olurdu.
+          */}
           <Note>
-            {`${MINI_R50_DTC_COUNT} R50 service codes loaded, including P1xxx manufacturer codes. This app only reads — Mode 04 is blocked at the command allowlist, so no clear command can reach the car.`}
+            {(vehicleId === 'mini_r50'
+              ? `${MINI_R50_DTC_COUNT} MINI R50 service codes loaded, including P1xxx manufacturer codes. `
+              : 'Standard OBD-II descriptions. Manufacturer-specific codes (P1xxx) are shown without a description. ') +
+              'This app only reads — Mode 04 is blocked at the command allowlist, so no clear command can reach the car.'}
           </Note>
         </ScrollView>
 
@@ -218,7 +228,7 @@ function CodeRow({ dtc, dim }: { dtc: Dtc; dim?: boolean }) {
         <Text style={[type.meta, { marginTop: space(1.25) }]}>
           {[
             dtc.miniFaultCode ? `Manufacturer fault code ${dtc.miniFaultCode}` : null,
-            dtc.vehicleSpecific ? 'R50 service data' : null,
+            dtc.vehicleSpecific ? 'MINI R50 service data' : null,
           ]
             .filter(Boolean)
             .join(' · ')}

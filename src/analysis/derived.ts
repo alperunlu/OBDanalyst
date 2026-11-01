@@ -14,7 +14,7 @@
  */
 
 import { maxOf, extentOf } from '../util/agg';
-import { MINI_R50, PHYSICS, type VehicleProfile } from './vehicle';
+import { GENERIC_VEHICLE, PHYSICS, type VehicleProfile } from './vehicle';
 import { rollingCircumferenceMm, totalDriveRatio, estimatedEngineTorqueNm, roadLoadForceN } from './tyre';
 
 export interface TimeSeriesPoint {
@@ -118,14 +118,14 @@ export function volumetricEfficiency(input: {
   mafGs: number;
   vehicle?: VehicleProfile;
 }): number | null {
-  const v = input.vehicle ?? MINI_R50;
+  const physics = (input.vehicle ?? GENERIC_VEHICLE).physics;
   const { rpm, mapKpa, iatC, mafGs } = input;
-  if (rpm <= 0 || mapKpa <= 0 || mafGs <= 0) return null;
+  if (!physics || rpm <= 0 || mapKpa <= 0 || mafGs <= 0) return null;
 
   const tempK = iatC + 273.15;
   if (tempK <= 0) return null;
 
-  const displacementM3 = v.displacementL / 1000;
+  const displacementM3 = physics.displacementL / 1000;
   // Dört zamanlı motor iki turda bir dolum yapar -> RPM/2.
   const intakeCyclesPerSec = rpm / 60 / 2;
   const theoreticalKgPerSec =
@@ -161,15 +161,16 @@ export function estimateAirflowSpeedDensity(input: {
   assumedVe?: number;
   vehicle?: VehicleProfile;
 }): number | null {
-  const v = input.vehicle ?? MINI_R50;
+  // Motor hacmi bilinmiyorsa tahmin yok: hacim sonucu doğrudan ölçekliyor.
+  const physics = (input.vehicle ?? GENERIC_VEHICLE).physics;
   const { rpm, mapKpa, iatC } = input;
-  if (rpm <= 0 || mapKpa <= 0) return null;
+  if (!physics || rpm <= 0 || mapKpa <= 0) return null;
 
   const tempK = iatC + 273.15;
   if (tempK <= 0) return null;
 
   const ve = input.assumedVe ?? NOMINAL_VOLUMETRIC_EFFICIENCY;
-  const displacementM3 = v.displacementL / 1000;
+  const displacementM3 = physics.displacementL / 1000;
   const intakeCyclesPerSec = rpm / 60 / 2;
 
   const kgPerSec =
@@ -216,7 +217,7 @@ export function fuelPer100Km(mafGs: number, speedKmh: number): number | null {
  */
 export function warmupSeconds(
   coolantSeries: readonly TimeSeriesPoint[],
-  targetC: number = MINI_R50.thermostatOpenC,
+  targetC: number = GENERIC_VEHICLE.thermostatOpenC,
   maxStartC = 60,
 ): number | null {
   const pts = [...coolantSeries].sort((a, b) => a.ts - b.ts);
@@ -244,7 +245,7 @@ export function warmupSeconds(
 export function idleSamples(
   rpmSeries: readonly TimeSeriesPoint[],
   speedSeries: readonly TimeSeriesPoint[],
-  vehicle: VehicleProfile = MINI_R50,
+  vehicle: VehicleProfile = GENERIC_VEHICLE,
 ): TimeSeriesPoint[] {
   // "Hız verisi yok" ile "hız verisi var ama araç hareket hâlinde" farklı
   // şeylerdir: ilkinde devir bandına güvenip devam ederiz, ikincisinde
@@ -335,7 +336,7 @@ export function idleStabilityRpm(
 export function idleRpmStability(
   rpmSeries: readonly TimeSeriesPoint[],
   speedSeries: readonly TimeSeriesPoint[],
-  vehicle: VehicleProfile = MINI_R50,
+  vehicle: VehicleProfile = GENERIC_VEHICLE,
 ): { stdDev: number; meanRpm: number; sampleCount: number } | null {
   const idleBand = idleSamples(rpmSeries, speedSeries, vehicle);
 
@@ -447,9 +448,10 @@ export function estimatedWheelPowerKw(input: {
   vehicle?: VehicleProfile;
   airDensity?: number;
 }): number | null {
-  const v = input.vehicle ?? MINI_R50;
+  // Kütle ve aerodinamik bilinmiyorsa güç tahmini yok.
+  const v = (input.vehicle ?? GENERIC_VEHICLE).physics;
   const speedMs = input.speedKmh / 3.6;
-  if (speedMs <= 0) return null;
+  if (!v || speedMs <= 0) return null;
 
   const rho = input.airDensity ?? PHYSICS.airDensitySeaLevel;
   const gradeRatio = (input.gradePercent ?? 0) / 100;
@@ -535,7 +537,7 @@ export type SeriesMap = Readonly<Record<string, readonly TimeSeriesPoint[]>>;
  * Bir oturumun insan okur özeti. Hesaplanamayan alanlar `null` döner —
  * eksik veriyi sıfırla doldurmak yanıltıcı olurdu.
  */
-export function summarizeTrip(series: SeriesMap, vehicle: VehicleProfile = MINI_R50): TripSummary {
+export function summarizeTrip(series: SeriesMap, vehicle: VehicleProfile = GENERIC_VEHICLE): TripSummary {
   const speed = series['gps_speed']?.length ? series['gps_speed'] : (series['0D'] ?? []);
   const rpm = series['0C'] ?? [];
   const coolant = series['05'] ?? [];
@@ -657,7 +659,8 @@ export function summarizeTrip(series: SeriesMap, vehicle: VehicleProfile = MINI_
    * Yalnızca HIZLANIRKEN ve makul hızda örnekler alınıyor: sabit hızda
    * kuvvet yalnızca sürtünmeyi yener, tepe torkla ilgisi olmaz.
    */
-  const circumference = rollingCircumferenceMm(vehicle.fittedTyre);
+  // Lastik ebadı bilinmeden aktarma oranı, kütle bilinmeden kuvvet yok.
+  const circumference = vehicle.fittedTyre ? rollingCircumferenceMm(vehicle.fittedTyre) : null;
   let maxEngineTorqueNm: number | null = null;
   /**
    * Vites değişimi torku uyduruyordu.
@@ -675,13 +678,13 @@ export function summarizeTrip(series: SeriesMap, vehicle: VehicleProfile = MINI_
   const RATIO_STABLE_PCT = 0.03;
   let prevRatio: number | null = null;
   let prevRatioTs = 0;
-  for (const a of accel) {
+  for (const a of circumference !== null && vehicle.physics ? accel : []) {
     if (a.value < 0.5) continue; // belirgin hızlanma yoksa anlamsız
     const v = nearestValue(speed, a.ts);
     const r = nearestValue(rpm, a.ts);
     if (v === null || r === null || v < 20) continue;
 
-    const ratio = totalDriveRatio(r, v, circumference);
+    const ratio = totalDriveRatio(r, v, circumference!);
     if (ratio === null) continue;
 
     const steady =
@@ -693,9 +696,10 @@ export function summarizeTrip(series: SeriesMap, vehicle: VehicleProfile = MINI_
     if (!steady) continue;
 
     const force = roadLoadForceN({ speedKmh: v, accelMs2: a.value, vehicle });
+    if (force === null) continue;
     const torque = estimatedEngineTorqueNm({
       wheelForceN: force,
-      circumferenceMm: circumference,
+      circumferenceMm: circumference!,
       totalRatio: ratio,
     });
     // Fizik dışı sonuçlar ölçüm hatasıdır; tepe değeri bozmasınlar.

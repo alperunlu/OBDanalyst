@@ -86,6 +86,8 @@ export interface Trend {
 const BASELINE_POINTS = 3;
 /** Hüküm verebilmek için gereken toplam ölçüm sayısı. */
 const MIN_POINTS = 5;
+/** Arayüzün "3/5 ölçüm" göstergesi için dışarı açılıyor. */
+export const TREND_MIN_POINTS = MIN_POINTS;
 
 function median(values: readonly number[]): number | null {
   if (values.length === 0) return null;

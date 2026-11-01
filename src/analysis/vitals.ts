@@ -61,7 +61,30 @@ export const VITAL_META: Readonly<
   o2_pre_switch_hz: { label: 'Pre-cat sensor switching rate', unit: 'Hz', betterWhen: 'higher' },
   catalyst_switch_ratio: { label: 'Converter oxygen storage', unit: 'ratio', betterWhen: 'lower' },
   charge_idle_drop_v: { label: 'Charging drop at idle', unit: 'V', betterWhen: 'lower' },
+  // Rölanti devri ECU'nun hedefi; kayması rölanti valfi, vakum kaçağı ya da
+  // gaz kelebeği kirlenmesi demek. İki yönü de haber.
+  warm_idle_rpm: { label: 'Warm idle speed', unit: 'rpm', betterWhen: 'stable' },
+  // Termostat seyirde sıcaklığı sabit tutar: yükselmesi radyatör/fan/su
+  // pompası, düşmesi açık kalan termostat. Dış sıcaklıktan az etkilenir —
+  // ısınma süresinin aksine mevsim trendi bozmuyor.
+  cruise_coolant_c: { label: 'Coolant temperature at cruise', unit: '°C', betterWhen: 'stable' },
+  // Regülatörün ayar noktası. Rölanti düşüşünden (fark) ayrı: o kayışı,
+  // bu regülatörün kendisini izliyor.
+  cruise_charge_v: { label: 'Charging voltage at cruise', unit: 'V', betterWhen: 'stable' },
+  // Yükte toplam yakıt düzeltmesi. Rölanti trimi vakum kaçağını, bu ise
+  // yükte ortaya çıkanları (yakıt pompası, enjektör, hava kütlesi) gösterir.
+  cruise_fuel_trim: { label: 'Total fuel trim at cruise', unit: '%', betterWhen: 'stable' },
 };
+
+/**
+ * Bir vital birimine uygun ondalık sayısı. Rölanti devrini "812.00 rpm"
+ * diye yazmak hassasiyet uydurmak; voltajda ise iki hane anlamlı.
+ */
+export function vitalDecimals(unit: string): number {
+  if (unit === 'rpm' || unit === '°C' || unit === 'kPa') return 0;
+  if (unit === '%' || unit === 'rpm σ') return 1;
+  return 2;
+}
 
 /** Kaydı VITAL_META'dan kuran yardımcı — etiket/birim tek kaynaktan gelsin. */
 function vital(key: string, value: number, stepId: string): Vital | null {
@@ -174,6 +197,11 @@ export function extractVitals(
     if (map !== null) {
       push(vital('warm_idle_map', map, 'warm-idle'));
     }
+
+    const idleRpm = median(idle.map((p) => p.value));
+    if (idleRpm !== null && idle.length >= 10) {
+      push(vital('warm_idle_rpm', idleRpm, 'warm-idle'));
+    }
   }
 
   // --- lambda sondası: cycle'ın dar kanal setinde ölçülebilir hâle gelen şey ---
@@ -199,8 +227,48 @@ export function extractVitals(
     }
   }
 
-  // --- şarj: rölanti ile seyir farkı. Kayış/alternatör yorulması burada. ---
   const cruise = step('cruise');
+
+  // --- seyir: motor ısınmışken. Soğuk motorda termostat kapalı, şarj
+  // marş sonrası aküyü dolduruyor, karışım zengin — üçü de yanlış okunur.
+  //
+  // "Isınmış" kararı pencerenin SONUNA kadar okunan son soğutma suyu
+  // değerinden: guided cycle'ın cruise adımı soğutma suyunu sormuyor ama
+  // ondan önceki ısınma adımı 85 °C'yi şart koşuyor, son okunan değer o.
+  if (cruise) {
+    const coolantSeries = series['05'] ?? [];
+    const before = coolantSeries.filter((p) => p.ts <= cruise.toMs);
+    const warm = before.length > 0 && before[before.length - 1].value >= 80;
+    if (warm) {
+      const coolant = within(coolantSeries, cruise).map((p) => p.value);
+      const coolantMedian = median(coolant);
+      if (coolantMedian !== null && coolant.length >= 5) {
+        push(vital('cruise_coolant_c', coolantMedian, 'cruise'));
+      }
+
+      const volts = within(series['battery_v'] ?? [], cruise).map((p) => p.value);
+      const voltsMedian = median(volts);
+      if (voltsMedian !== null && volts.length >= 2) {
+        push(vital('cruise_charge_v', voltsMedian, 'cruise'));
+      }
+
+      // Kısa ve uzun dönem trim aynı anda: biri diğerini telafi eder,
+      // anlamlı olan toplamı.
+      const stft = within(series['06'] ?? [], cruise);
+      const ltft = series['07'] ?? [];
+      const totals: number[] = [];
+      for (const p of stft) {
+        const l = valueAtOrBefore(ltft, p.ts, 5_000);
+        if (l !== null) totals.push(p.value + l);
+      }
+      const trim = median(totals);
+      if (trim !== null && totals.length >= 5) {
+        push(vital('cruise_fuel_trim', trim, 'cruise'));
+      }
+    }
+  }
+
+  // --- şarj: rölanti ile seyir farkı. Kayış/alternatör yorulması burada. ---
   if (cruise && warmIdle) {
     const idleV = median(within(series['battery_v'] ?? [], warmIdle).map((p) => p.value));
     const cruiseV = median(within(series['battery_v'] ?? [], cruise).map((p) => p.value));

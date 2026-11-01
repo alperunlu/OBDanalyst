@@ -6,6 +6,8 @@ import { useAppStore } from '../src/state/store';
 import { writeAndShare } from '../src/util/exportFile';
 import { isManufacturerSpecific, type Dtc, type ReadinessStatus } from '../src/obd/dtc';
 import { MINI_R50_DTC_COUNT } from '../src/obd/dtcMini';
+import { VITAL_META, vitalDecimals } from '../src/analysis/vitals';
+import { TREND_MIN_POINTS } from '../src/analysis/trend';
 import { VehicleChrome } from '../src/ui/VehicleChrome';
 import { SectionRule, Tag, PrimaryAction, GhostAction, Note } from '../src/ui/primitives';
 import { color, type, space, hairlineWidth } from '../src/ui/theme';
@@ -320,51 +322,131 @@ function TrendSection({
   }
 
   const drifting = trends.filter((t) => t.trend.verdict === 'drifting');
-  const quiet = trends.length - drifting.length;
+  const building = trends.filter((t) => t.trend.verdict === 'baseline');
+  const steady = trends.length - drifting.length - building.length;
+  // Hiç ölçülmemiş olanlar da adıyla anılıyor: neyin beklendiğini bilmeyen
+  // kullanıcı "neden bu yok" diye sormaz, sadece eksik sanır.
+  const seen = new Set(trends.map((t) => t.key));
+  const notYet = Object.entries(VITAL_META).filter(([key]) => !seen.has(key));
 
   return (
     <View style={{ marginBottom: space(5) }}>
       <SectionRule
         label="Trends"
-        meta={drifting.length > 0 ? `${drifting.length} moving` : `${trends.length} steady`}
+        meta={
+          drifting.length > 0
+            ? `${drifting.length} moving`
+            : building.length > 0
+              ? `${building.length} building a baseline`
+              : `${trends.length} steady`
+        }
         metaColor={drifting.length > 0 ? color.caution : undefined}
       />
 
-      {drifting.map((t) => (
-        <View key={t.key} style={styles.trendRow}>
-          <View style={[styles.trendBar, { backgroundColor: color.caution }]} />
-          <View style={{ flex: 1 }}>
-            <Text style={type.metaSmall}>{t.label}</Text>
-            <Text style={[type.prose, { color: color.ink, marginTop: space(0.75) }]}>
-              {`${t.value.toFixed(2)} ${t.unit}`}
-            </Text>
-            <Text style={[type.meta, { marginTop: space(1), lineHeight: 16 }]}>
-              {`Baseline ${(t.trend.baseline ?? 0).toFixed(2)} ${t.unit}, now ${t.value.toFixed(2)} — ` +
-                `${(t.trend.change ?? 0) > 0 ? 'up' : 'down'} ${Math.abs(t.trend.change ?? 0).toFixed(2)}` +
-                (t.trend.slopePerMonth !== null && Number.isFinite(t.trend.slopePerMonth)
-                  ? `, about ${t.trend.slopePerMonth.toFixed(2)} ${t.unit} per month.`
-                  : '.')}
-            </Text>
+      {drifting.map((t) => {
+        const d = vitalDecimals(t.unit);
+        return (
+          <View key={t.key} style={styles.trendRow}>
+            <View style={[styles.trendBar, { backgroundColor: color.caution }]} />
+            <View style={{ flex: 1 }}>
+              <Text style={type.metaSmall}>{t.label}</Text>
+              <Text style={[type.prose, { color: color.ink, marginTop: space(0.75) }]}>
+                {`${t.value.toFixed(d)} ${t.unit}`}
+              </Text>
+              <Text style={[type.meta, { marginTop: space(1), lineHeight: 16 }]}>
+                {`Baseline ${(t.trend.baseline ?? 0).toFixed(d)} ${t.unit}, now ${t.value.toFixed(d)} — ` +
+                  `${(t.trend.change ?? 0) > 0 ? 'up' : 'down'} ${Math.abs(t.trend.change ?? 0).toFixed(d)}` +
+                  (t.trend.slopePerMonth !== null && Number.isFinite(t.trend.slopePerMonth)
+                    ? `, about ${t.trend.slopePerMonth.toFixed(d)} ${t.unit} per month.`
+                    : '.')}
+              </Text>
+            </View>
           </View>
-        </View>
+        );
+      })}
+
+      {/*
+        Taban çizgisi kurulan ölçümler tek tek, ilerlemesiyle. Eskiden
+        "steady or still building a baseline" diye tek satıra gömülüyordu;
+        yeni bir kullanıcı haftalarca neyin ne kadar kaldığını göremiyordu.
+      */}
+      {building.map((t) => (
+        <BaselineProgress
+          key={t.key}
+          label={t.label}
+          collected={TREND_MIN_POINTS - t.trend.needMore}
+          total={TREND_MIN_POINTS}
+        />
       ))}
 
-      {quiet > 0 ? (
+      {steady > 0 ? (
         <Text style={[type.metaSmall, { marginTop: space(2) }]}>
-          {`${quiet} other measurement${quiet === 1 ? '' : 's'} steady or still building a baseline.`}
+          {`${steady} other measurement${steady === 1 ? '' : 's'} steady.`}
+        </Text>
+      ) : null}
+
+      {notYet.length > 0 ? (
+        <Text style={[type.metaSmall, { marginTop: space(2), lineHeight: 16 }]}>
+          {`Not measured yet: ${notYet.map(([, m]) => m.label).join(', ')}.`}
         </Text>
       ) : null}
 
       <Note>
         Trends compare this car against its own earlier readings taken under the same conditions,
-        not against other cars, and they do not predict when something will fail.
+        not against other cars, and they do not predict when something will fail. The oxygen
+        sensor readings come only from the guided cycle on Live.
       </Note>
+    </View>
+  );
+}
+
+/**
+ * "3/5 readings" — taban çizgisine kalan yol. Parçalı çubuk, dilin geri
+ * kalanı gibi: dolgu yalnızca kazanılmış ölçüm, radius yok.
+ */
+function BaselineProgress({
+  label,
+  collected,
+  total,
+}: {
+  label: string;
+  collected: number;
+  total: number;
+}) {
+  return (
+    <View style={styles.progressRow}>
+      <View style={styles.progressHead}>
+        <Text style={[type.prose, { color: color.chrome, flex: 1 }]}>{label}</Text>
+        <Text style={type.metaSmall}>{`${collected}/${total} readings`}</Text>
+      </View>
+      <View style={styles.progressTrack}>
+        {Array.from({ length: total }, (_, i) => (
+          <View
+            key={i}
+            style={[styles.progressCell, i < collected ? styles.progressCellOn : null]}
+          />
+        ))}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   trendRow: { flexDirection: 'row', gap: space(2.5), paddingVertical: space(2.5) },
+  progressRow: {
+    paddingVertical: space(2.5),
+    borderBottomWidth: hairlineWidth,
+    borderBottomColor: color.hairlineFaint,
+  },
+  progressHead: { flexDirection: 'row', alignItems: 'baseline', gap: space(3) },
+  progressTrack: { flexDirection: 'row', gap: space(1), marginTop: space(2) },
+  progressCell: {
+    flex: 1,
+    height: 4,
+    borderWidth: hairlineWidth,
+    borderColor: color.hairlineStrong,
+  },
+  progressCellOn: { backgroundColor: color.ink, borderColor: color.ink },
   trendBar: { width: 2, alignSelf: 'stretch' },
   safe: { flex: 1, backgroundColor: color.ground },
   body: { flex: 1, paddingHorizontal: space(5), paddingTop: space(4) },

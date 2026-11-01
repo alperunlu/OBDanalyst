@@ -20,6 +20,8 @@
 import type { Finding } from '../analysis/diagnostics';
 import type { TripSummary } from '../analysis/derived';
 import type { Trend } from '../analysis/trend';
+import { vitalDecimals } from '../analysis/vitals';
+import { TREND_MIN_POINTS } from '../analysis/trend';
 
 export interface ReportVital {
   readonly key: string;
@@ -96,7 +98,7 @@ function trendSentence(vital: ReportVital): string {
   const t = vital.trend;
   if (t.verdict === 'baseline') {
     return t.needMore > 0
-      ? `Building a baseline — ${t.needMore} more cycle${t.needMore === 1 ? '' : 's'} before a trend means anything.`
+      ? `Building a baseline — ${TREND_MIN_POINTS - t.needMore}/${TREND_MIN_POINTS} readings; ${t.needMore} more before a trend means anything.`
       : 'Building a baseline.';
   }
   const change = t.change ?? 0;
@@ -240,7 +242,7 @@ export function buildReportHtml(input: ReportInput): string {
           <span class="source">${v.source === 'cycle' ? 'guided step' : 'detected in drive'}</span>
           <div class="trend ${v.trend.verdict}">${escapeHtml(trendSentence(v))}</div>
         </td>
-        <td class="value">${fmt(v.value, v.unit, 2)}</td>
+        <td class="value">${fmt(v.value, v.unit, vitalDecimals(v.unit))}</td>
       </tr>`,
         )
         .join('')

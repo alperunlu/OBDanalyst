@@ -15,6 +15,7 @@
 import { splitResponseLines } from './elm327';
 import { lookupMiniDtc, type MiniDtcEntry } from './dtcMini';
 import { GENERIC_DTC_DESCRIPTIONS, dtcCategory } from './dtcGeneric';
+import type { FreezeFrame } from './freezeFrame';
 import type { VehicleProfileId } from '../analysis/vehicle';
 
 export type DtcKind = 'stored' | 'pending' | 'permanent';
@@ -234,6 +235,7 @@ export function formatDtcReport(
   groups: Readonly<Record<DtcKind, readonly Dtc[]>>,
   mil: MilStatus | null,
   readiness?: ReadinessStatus | null,
+  freezeFrame?: FreezeFrame | null,
 ): string {
   const lines: string[] = [];
   lines.push('OBD-II fault code report');
@@ -260,6 +262,13 @@ export function formatDtcReport(
       const desc = d.description ?? `${d.category} — no detailed description`;
       const fc = d.miniFaultCode ? `  [FC ${d.miniFaultCode}]` : '';
       lines.push(`  ${d.code}  ${desc}${fc}`);
+      if (kind === 'stored' && freezeFrame && freezeFrame.dtc === d.code) {
+        lines.push('    Freeze frame (conditions when this code was set):');
+        if (freezeFrame.fuelSystem) lines.push(`      Fuel system: ${freezeFrame.fuelSystem}`);
+        for (const v of freezeFrame.values) {
+          lines.push(`      ${v.name}: ${Number.isInteger(v.value) ? v.value : v.value.toFixed(1)} ${v.unit}`);
+        }
+      }
     }
     lines.push('');
   }

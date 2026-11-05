@@ -7,6 +7,7 @@ import { writeAndShare } from '../src/util/exportFile';
 import { isManufacturerSpecific, type Dtc, type ReadinessStatus } from '../src/obd/dtc';
 import { MINI_R50_DTC_COUNT } from '../src/obd/dtcMini';
 import { VITAL_META, vitalDecimals } from '../src/analysis/vitals';
+import { formatFreezeFrameValue, type FreezeFrame } from '../src/obd/freezeFrame';
 import { TREND_MIN_POINTS } from '../src/analysis/trend';
 import { VehicleChrome } from '../src/ui/VehicleChrome';
 import { SectionRule, Tag, PrimaryAction, GhostAction, Note } from '../src/ui/primitives';
@@ -26,6 +27,7 @@ export default function FaultsScreen() {
   const connectionState = useAppStore((s) => s.connectionState);
   const dtcGroups = useAppStore((s) => s.dtcGroups);
   const vehicleId = useAppStore((s) => s.vehicle.id);
+  const freezeFrame = useAppStore((s) => s.freezeFrame);
   const milStatus = useAppStore((s) => s.milStatus);
   const readiness = useAppStore((s) => s.readiness);
   const dtcReading = useAppStore((s) => s.dtcReading);
@@ -108,7 +110,13 @@ export default function FaultsScreen() {
           )}
 
           {stored.length > 0 && (
-            <CodeGroup label="Stored" meta="Mode 03 · turns the light on" codes={stored} primary />
+            <CodeGroup
+              label="Stored"
+              meta="Mode 03 · turns the light on"
+              codes={stored}
+              primary
+              freezeFrame={freezeFrame}
+            />
           )}
           {pending.length > 0 && (
             <CodeGroup label="Pending" meta="Mode 07 · seen once, unconfirmed" codes={pending} />
@@ -194,23 +202,39 @@ function CodeGroup({
   meta,
   codes,
   primary,
+  freezeFrame,
 }: {
   label: string;
   meta: string;
   codes: readonly Dtc[];
   primary?: boolean;
+  /** Yalnızca kayıtlı kodlarda: kareyi tetikleyen kodun altında gösteriliyor. */
+  freezeFrame?: FreezeFrame | null;
 }) {
   return (
     <View style={{ marginTop: space(5) }}>
       <SectionRule label={label} meta={meta} />
       {codes.map((d) => (
-        <CodeRow key={`${d.kind}-${d.code}`} dtc={d} dim={!primary} />
+        <CodeRow
+          key={`${d.kind}-${d.code}`}
+          dtc={d}
+          dim={!primary}
+          freezeFrame={freezeFrame && freezeFrame.dtc === d.code ? freezeFrame : null}
+        />
       ))}
     </View>
   );
 }
 
-function CodeRow({ dtc, dim }: { dtc: Dtc; dim?: boolean }) {
+function CodeRow({
+  dtc,
+  dim,
+  freezeFrame,
+}: {
+  dtc: Dtc;
+  dim?: boolean;
+  freezeFrame?: FreezeFrame | null;
+}) {
   const ink = dim ? color.chrome : color.ink;
   const tag = tagFor(dtc);
 
@@ -233,6 +257,28 @@ function CodeRow({ dtc, dim }: { dtc: Dtc; dim?: boolean }) {
             .join(' · ')}
         </Text>
       )}
+      {freezeFrame && (freezeFrame.values.length > 0 || freezeFrame.fuelSystem) ? (
+        <FreezeFrameBlock frame={freezeFrame} />
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * Kodun oluştuğu anın verisi. Kodun "ne"si açıklamada; bu blok "ne zaman,
+ * hangi koşulda"sını veriyor — rölantide mi yükte mi, soğuk mu sıcak mı.
+ * Yorum yok, yalnızca ECU'nun sakladığı değerler: yorum açıklamanın işi.
+ */
+function FreezeFrameBlock({ frame }: { frame: FreezeFrame }) {
+  return (
+    <View style={styles.freezeFrame}>
+      <Text style={type.labelSmall}>Conditions when this code was set</Text>
+      {frame.fuelSystem ? (
+        <Text style={[type.metaSmall, { marginTop: space(1.5) }]}>{frame.fuelSystem}</Text>
+      ) : null}
+      <Text style={[type.prose, { color: color.chrome, marginTop: space(1.5), lineHeight: 20 }]}>
+        {frame.values.map(formatFreezeFrameValue).join(' · ')}
+      </Text>
     </View>
   );
 }
@@ -430,6 +476,12 @@ function BaselineProgress({
 
 const styles = StyleSheet.create({
   trendRow: { flexDirection: 'row', gap: space(2.5), paddingVertical: space(2.5) },
+  freezeFrame: {
+    marginTop: space(2.5),
+    paddingLeft: space(3),
+    borderLeftWidth: hairlineWidth,
+    borderLeftColor: color.hairlineStrong,
+  },
   progressRow: {
     paddingVertical: space(2.5),
     borderBottomWidth: hairlineWidth,

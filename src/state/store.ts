@@ -59,6 +59,7 @@ import {
   SELECTABLE_SENSOR_CHANNELS,
   type SensorGroupKey,
 } from '../data/channels';
+import { readFreezeFrame, type FreezeFrame } from '../obd/freezeFrame';
 import {
   GENERIC_VEHICLE,
   VEHICLE_PROFILES,
@@ -254,6 +255,8 @@ interface AppState {
   // --- arıza kodları (SALT OKUMA — silme yok) ---
   dtcGroups: Readonly<Record<DtcKind, readonly Dtc[]>> | null;
   milStatus: MilStatus | null;
+  /** Kayıtlı kodu tetikleyen anın verisi (Mode 02), ECU sakladıysa. */
+  freezeFrame: FreezeFrame | null;
   readiness: ReadinessStatus | null;
   dtcReading: boolean;
   readDtcs: () => Promise<string | null>;
@@ -425,6 +428,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   dtcGroups: null,
   milStatus: null,
+  freezeFrame: null,
   readiness: null,
   dtcReading: false,
 
@@ -715,14 +719,21 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
 
-      set({ dtcGroups: groups, milStatus, readiness });
+      /**
+       * Freeze frame yalnızca kayıtlı kod varken soruluyor: bekleyen kod
+       * kare saklatmaz, kod yokken sormak boşa birkaç zaman aşımı demek.
+       */
+      const freezeFrame =
+        groups.stored.length > 0 ? await readFreezeFrame((cmd) => queue.send(cmd)) : null;
+
+      set({ dtcGroups: groups, milStatus, readiness, freezeFrame });
       const total = groups.stored.length + groups.pending.length + groups.permanent.length;
       appendLog(set, {
         ts: Date.now(),
         direction: 'info',
         text: `Fault codes read: ${total} (MIL ${milStatus?.milOn ? 'ON' : 'off'})`,
       });
-      return formatDtcReport(groups, milStatus, readiness);
+      return formatDtcReport(groups, milStatus, readiness, freezeFrame);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       set({ connectError: message });
@@ -1292,7 +1303,7 @@ function identifyVehicle(
   const next = vehicleFor(id, get().fittedTyreChoice, fuel);
   if (next.id === current.id && next.fuel === current.fuel) return;
   // Kodlar profile göre çözüldüğü için profil değişince eski okuma bayat.
-  set({ vehicle: next, ...(next.id !== current.id ? { dtcGroups: null } : {}) });
+  set({ vehicle: next, ...(next.id !== current.id ? { dtcGroups: null, freezeFrame: null } : {}) });
   void repo.setSetting(VEHICLE_PROFILE_KEY, next.id).catch(() => undefined);
   void repo.setSetting(VEHICLE_FUEL_KEY, next.fuel).catch(() => undefined);
   appendLog(set, {

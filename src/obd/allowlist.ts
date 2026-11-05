@@ -94,6 +94,17 @@ const OBD_DTC_READ: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Mode 02 — freeze frame: arıza kodu oluştuğu anda ECU'nun sakladığı veri.
+ *
+ * Mode 01 ile aynı PID'ler, aynı veri; tek fark değerin "şimdi" değil
+ * "kodun oluştuğu an" olması. Salt-okunur: ECU'nun hafızasını sorar,
+ * değiştirmez. Biçim `02 PP FF` (PID + kare numarası) ve yalnızca kare 00'a
+ * izin var — ECU'ların çoğu tek kare saklıyor, başka kare istemenin
+ * meşru bir sebebi yok, dar tutmanın ise var.
+ */
+const OBD_MODE_02 = /^02[0-9A-F]{2}00$/;
+
+/**
  * Sabit AT komutları. Bunlar ADAPTÖRE gider, araca değil — bus'a hiçbir şey
  * yazmazlar. Wildcard yok, tam eşleşme.
  */
@@ -178,6 +189,7 @@ export function assertReadOnly(raw: string): string {
 
   if (OBD_MODE_01.test(cmd)) return cmd;
   if (OBD_DTC_READ.has(cmd)) return cmd;
+  if (OBD_MODE_02.test(cmd)) return cmd;
   if (OBD_MODE_09_READ.has(cmd)) return cmd;
   if (AT_LITERALS.has(cmd)) return cmd;
   if (AT_PATTERNS.some((p) => p.test(cmd))) return cmd;
@@ -203,6 +215,7 @@ export function isReadOnlyCommand(raw: string): boolean {
 export const ALLOWED_COMMANDS_SUMMARY = [
   'OBD: 01XX / 01XXn (Mode 01 — current data, read only; n = expected replies)',
   'OBD: 03, 07, 0A (read fault codes — never clears them)',
+  'OBD: 02XX00 (freeze frame of the code that lit the MIL, frame 0 only — read only)',
   'OBD: 0900, 0902 (vehicle information — VIN only)',
   `AT : ${[...AT_LITERALS].join(', ')}`,
   'AT : ATSP0-ATSPC (select protocol), ATSTxx (timeout)',

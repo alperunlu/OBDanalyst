@@ -6,4 +6,4 @@
  * mi?" sorusunun tartışmasız cevabı. Arabaya çıkmadan Bus ekranına bakıp
  * beklenen değerle karşılaştırmak yeterli.
  */
-export const JS_BUILD_TAG = '2026-11-05 · js-38 (diesel, standard fault codes)';
+export const JS_BUILD_TAG = '2026-11-05 · js-39 (1.4.0 freeze frame)';

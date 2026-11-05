@@ -16,7 +16,7 @@
  */
 
 import type { SeriesMap, TimeSeriesPoint } from './derived';
-import { idleSamples, idleStabilityRpm, valueAtOrBefore } from './derived';
+import { idleSamples, idleStabilityRpm, resolvedFuel, valueAtOrBefore } from './derived';
 import { GENERIC_VEHICLE, type VehicleProfile } from './vehicle';
 
 /** Bir cycle adımının kayıt içindeki zaman aralığı (ms, oturum başına göre). */
@@ -150,6 +150,7 @@ export function extractVitals(
 ): Vital[] {
   const out: Vital[] = [];
   const step = (id: string) => windows.find((w) => w.stepId === id && !w.skipped);
+  const isDiesel = resolvedFuel(vehicle, series) === 'diesel';
 
   const push = (v: Vital | null) => {
     if (v && Number.isFinite(v.value)) out.push(v);
@@ -193,7 +194,9 @@ export function extractVitals(
       push(vital('warm_idle_ltft', ltft, 'warm-idle'));
     }
 
-    const map = median(within(series['0B'] ?? [], warmIdle).map((p) => p.value));
+    // Dizelde rölanti manifold basıncı atmosfer/turbo basıncı; motor
+    // sağlığı hakkında bir şey söylemiyor, havanın basıncını izler.
+    const map = isDiesel ? null : median(within(series['0B'] ?? [], warmIdle).map((p) => p.value));
     if (map !== null) {
       push(vital('warm_idle_map', map, 'warm-idle'));
     }

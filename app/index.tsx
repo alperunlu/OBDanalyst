@@ -34,7 +34,7 @@ import {
   sameTyreSize,
   tyreOptionsFor,
 } from '../src/analysis/tyre';
-import type { TyreSize } from '../src/analysis/vehicle';
+import { FUEL_LABELS, type TyreSize } from '../src/analysis/vehicle';
 import { decodeVin } from '../src/obd/vin';
 import { describeSpl, MIN_SPL_CALIBRATION_DB, MAX_SPL_CALIBRATION_DB } from '../src/analysis/spl';
 import { writeAndShare } from '../src/util/exportFile';
@@ -275,6 +275,19 @@ export default function LinkScreen() {
               hali. VIN okunamadıysa son bilinen profil geçerli kalıyor.
             */}
             <Fact label="Vehicle profile" value={vehicle.name} />
+            {/*
+              Yakıt tipi benzine özel hesapların (tüketim, vakum, sonda)
+              açılıp kapanmasını belirliyor; neden kapalı olduklarını bu
+              satır açıklıyor.
+            */}
+            <Fact
+              label="Fuel"
+              value={
+                vehicle.fuel === 'unknown'
+                  ? 'not reported by the ECU — told from idle manifold pressure'
+                  : FUEL_LABELS[vehicle.fuel]
+              }
+            />
             {/*
               VIN burada duruyor çünkü bu ekranın işi "neye bağlıyım"
               sorusunu cevaplamak, ve VIN o cevabın en kesin parçası:

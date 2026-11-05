@@ -32,6 +32,35 @@ export interface TyreSize {
 export type VehicleProfileId = 'generic' | 'mini_r50';
 
 /**
+ * Yakıt tipi — benzine özel hesapların (hava/yakıt oranından tüketim,
+ * manifold vakumu, lambda sondası) hangi araçta anlamlı olduğunu belirliyor.
+ *
+ * `other`: LPG, CNG, etanol, elektrik, hibrit — benzin varsayımı onlarda da
+ * yanlış ama dizelin aksine kıvılcımlı ateşleme, yani vakum ve sonda
+ * kontrolleri geçerli kalıyor.
+ */
+export type FuelType = 'gasoline' | 'diesel' | 'other' | 'unknown';
+
+/**
+ * PID 51'in (fuel type) cevabı → yakıt tipi. SAE J1979 tablosu:
+ * 1 benzin, 4 dizel, 9 bifuel-benzin, 17 hibrit-benzin, 19 hibrit-dizel,
+ * 23 bifuel-dizel. 0 "bilgi yok"; geri kalanı alternatif yakıtlar.
+ */
+export function fuelTypeFromCode(code: number | null): FuelType {
+  if (code === null || code === 0) return 'unknown';
+  if (code === 1 || code === 9 || code === 17) return 'gasoline';
+  if (code === 4 || code === 19 || code === 23) return 'diesel';
+  return 'other';
+}
+
+export const FUEL_LABELS: Readonly<Record<FuelType, string>> = {
+  gasoline: 'Petrol',
+  diesel: 'Diesel',
+  other: 'Alternative fuel or hybrid',
+  unknown: 'Unknown',
+};
+
+/**
  * Araca ait fizik verisi. Bilinmeyen bir araçta bunların hiçbiri tahmin
  * edilmiyor — profilde `physics: null` duruyor ve ona dayanan hesaplar
  * `null` dönüyor.
@@ -52,6 +81,11 @@ export interface VehiclePhysics {
 export interface VehicleProfile {
   readonly id: VehicleProfileId;
   readonly name: string;
+  /**
+   * Bilinen yakıt tipi. `unknown` ise analiz katmanı veriden çıkarmayı
+   * dener (bkz. `resolvedFuel`, derived.ts).
+   */
+  readonly fuel: FuelType;
   /** Kütle, motor hacmi, aerodinamik — bilinmiyorsa `null`. */
   readonly physics: VehiclePhysics | null;
   /**
@@ -93,6 +127,7 @@ export interface VehicleProfile {
 export const GENERIC_VEHICLE: VehicleProfile = {
   id: 'generic',
   name: 'Generic OBD-II vehicle',
+  fuel: 'unknown',
   physics: null,
   // Yalnızca "rölantide mi" kapısı: 800 × 1.6 = 1280 rpm, çoğu benzinlinin
   // sıcak ve soğuk rölantisini kapsıyor.
@@ -112,6 +147,7 @@ export const GENERIC_VEHICLE: VehicleProfile = {
 export const MINI_R50: VehicleProfile = {
   id: 'mini_r50',
   name: 'MINI Cooper R50 (2001-2006)',
+  fuel: 'gasoline',
   physics: {
     displacementL: 1.598,
     massKg: 1215, // ~1140 kg boş + sürücü + yakıt
@@ -137,12 +173,21 @@ export const VEHICLE_PROFILES: Readonly<Record<VehicleProfileId, VehicleProfile>
 };
 
 /**
- * Profil + kullanıcının seçtiği lastik. Seçim yoksa profilin fabrika ebadı
- * (jenerikte o da yok, `null` kalır).
+ * Profil + kullanıcının seçtiği lastik + ECU'dan okunan yakıt tipi. Lastik
+ * seçimi yoksa profilin fabrika ebadı (jenerikte o da yok, `null` kalır);
+ * yakıt bilinmiyorsa profilinki.
  */
-export function vehicleFor(id: VehicleProfileId, fittedTyre: TyreSize | null): VehicleProfile {
+export function vehicleFor(
+  id: VehicleProfileId,
+  fittedTyre: TyreSize | null,
+  fuel: FuelType = 'unknown',
+): VehicleProfile {
   const base = VEHICLE_PROFILES[id];
-  return { ...base, fittedTyre: fittedTyre ?? base.factoryTyre };
+  return {
+    ...base,
+    fittedTyre: fittedTyre ?? base.factoryTyre,
+    fuel: fuel === 'unknown' ? base.fuel : fuel,
+  };
 }
 
 /**
@@ -206,6 +251,7 @@ export function profileAssumptions(v: VehicleProfile): string[] {
           `rolling resistance ${p.rollingResistance}`,
         ]
       : ['mass, displacement and aerodynamics unknown — power, torque and airflow estimates not computed']),
+    `fuel ${FUEL_LABELS[v.fuel].toLowerCase()}`,
     `idle ${v.idleRpm} rpm`,
     t ? `tyres ${t.widthMm}/${t.aspectRatio} R${t.rimInch}` : 'tyre size not set',
   ];

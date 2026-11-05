@@ -62,11 +62,13 @@ import {
 import {
   GENERIC_VEHICLE,
   VEHICLE_PROFILES,
+  fuelTypeFromCode,
   profileForVin,
   vehicleFor,
   type TyreSize,
   type VehicleProfile,
   type VehicleProfileId,
+  type FuelType,
 } from '../analysis/vehicle';
 import { parseTyreSize, formatTyreSize } from '../analysis/tyre';
 import {
@@ -217,6 +219,11 @@ interface AppState {
   vehicle: VehicleProfile;
   /** Kullanıcının seçtiği lastik; profil değişince yeni profile taşınıyor. */
   fittedTyreChoice: TyreSize | null;
+  /**
+   * ECU'nun PID 51 ile bildirdiği yakıt tipi, VIN başına. Trip'ler kaydedildiği
+   * aracın yakıtıyla analiz edilsin diye kalıcı; araç bağlı değilken de lazım.
+   */
+  fuelByVin: Readonly<Record<string, FuelType>>;
   tyreError: string | null;
   loadSettings: () => Promise<void>;
   setFittedTyre: (tyre: TyreSize) => Promise<void>;
@@ -504,6 +511,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   vehicle: GENERIC_VEHICLE,
   fittedTyreChoice: null,
+  fuelByVin: {},
   tyreError: null,
 
   soundMeterOn: false,
@@ -622,7 +630,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const tyre = raw ? parseTyreSize(raw) : null;
       const savedProfile = await repo.getSetting(VEHICLE_PROFILE_KEY);
       const id = isProfileId(savedProfile) ? savedProfile : get().vehicle.id;
-      set({ fittedTyreChoice: tyre, vehicle: vehicleFor(id, tyre) });
+      const savedFuel = await repo.getSetting(VEHICLE_FUEL_KEY);
+      const fuel = isFuelType(savedFuel) ? savedFuel : get().vehicle.fuel;
+      const fuelByVin = parseFuelByVin(await repo.getSetting(FUEL_BY_VIN_KEY));
+      set({ fittedTyreChoice: tyre, fuelByVin, vehicle: vehicleFor(id, tyre, fuel) });
       const cal = await repo.getSetting('spl_calibration_db');
       if (cal) set({ splCalibrationDb: clampCalibration(Number(cal)) });
 
@@ -647,7 +658,8 @@ export const useAppStore = create<AppState>((set, get) => ({
    * oturum boyunca geçerli kalıyor.
    */
   setFittedTyre: async (tyre: TyreSize) => {
-    set({ fittedTyreChoice: tyre, vehicle: vehicleFor(get().vehicle.id, tyre), tyreError: null });
+    const { id, fuel } = get().vehicle;
+    set({ fittedTyreChoice: tyre, vehicle: vehicleFor(id, tyre, fuel), tyreError: null });
     try {
       await repo.setSetting('fitted_tyre', formatTyreSize(tyre));
     } catch (e) {
@@ -1212,35 +1224,81 @@ async function runInitSequence(
     direction: 'info',
     text: `Ready. Protocol #${initResult.protocolNumber}, adapter: ${initResult.adapterInfo}`,
   });
-  identifyVehicle(initResult.vin, set, get);
+  identifyVehicle(initResult.vin, initResult.fuelTypeCode, set, get);
 }
 
 const VEHICLE_PROFILE_KEY = 'vehicle_profile';
+const VEHICLE_FUEL_KEY = 'vehicle_fuel';
+const FUEL_BY_VIN_KEY = 'fuel_by_vin';
 
 function isProfileId(value: string | null): value is VehicleProfileId {
   return value !== null && value in VEHICLE_PROFILES;
 }
 
+function isFuelType(value: unknown): value is FuelType {
+  return value === 'gasoline' || value === 'diesel' || value === 'other' || value === 'unknown';
+}
+
+function parseFuelByVin(raw: string | null): Record<string, FuelType> {
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        (e): e is [string, FuelType] => isFuelType(e[1]),
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
 /**
- * VIN'den profili seçer ve kalıcı yapar.
+ * VIN'den profili, PID 51'den yakıt tipini seçer ve kalıcı yapar.
  *
- * VIN yoksa hiçbir şey değişmiyor: eski araçların bir kısmı Mode 09'a hiç
+ * VIN yoksa profil değişmiyor: eski araçların bir kısmı Mode 09'a hiç
  * cevap vermiyor, bir kısmı bazen zaman aşımına düşüyor. İkinci durumda
  * profili jeneriğe düşürmek MINI kodlarını sessizce kaybettirirdi.
+ *
+ * Yakıt tipi aynı mantıkla: ECU bildirmediyse VIN için daha önce
+ * öğrenilen değer, o da yoksa profilinki (jenerikte `unknown` — analiz
+ * katmanı veriden çıkarıyor).
  */
 function identifyVehicle(
   vin: string | null,
+  fuelTypeCode: number | null,
   set: (partial: Partial<AppState> | ((s: AppState) => Partial<AppState>)) => void,
   get: () => AppState,
 ): void {
-  const id = profileForVin(vin);
-  if (id === null || id === get().vehicle.id) return;
-  set({ vehicle: vehicleFor(id, get().fittedTyreChoice), dtcGroups: null });
-  void repo.setSetting(VEHICLE_PROFILE_KEY, id).catch(() => undefined);
+  const current = get().vehicle;
+  const id = profileForVin(vin) ?? current.id;
+  const reported = fuelTypeFromCode(fuelTypeCode);
+  const fuel: FuelType =
+    reported !== 'unknown'
+      ? reported
+      : vin && get().fuelByVin[vin]
+        ? get().fuelByVin[vin]
+        : id === current.id
+          ? current.fuel
+          : 'unknown';
+
+  if (vin && reported !== 'unknown' && get().fuelByVin[vin] !== reported) {
+    const fuelByVin = { ...get().fuelByVin, [vin]: reported };
+    set({ fuelByVin });
+    void repo.setSetting(FUEL_BY_VIN_KEY, JSON.stringify(fuelByVin)).catch(() => undefined);
+  }
+
+  const next = vehicleFor(id, get().fittedTyreChoice, fuel);
+  if (next.id === current.id && next.fuel === current.fuel) return;
+  // Kodlar profile göre çözüldüğü için profil değişince eski okuma bayat.
+  set({ vehicle: next, ...(next.id !== current.id ? { dtcGroups: null } : {}) });
+  void repo.setSetting(VEHICLE_PROFILE_KEY, next.id).catch(() => undefined);
+  void repo.setSetting(VEHICLE_FUEL_KEY, next.fuel).catch(() => undefined);
   appendLog(set, {
     ts: Date.now(),
     direction: 'info',
-    text: `Vehicle profile from VIN: ${VEHICLE_PROFILES[id].name}`,
+    text: `Vehicle profile: ${next.name}, fuel ${next.fuel}`,
   });
 }
 
@@ -1712,7 +1770,12 @@ async function recoverProtocol(
   try {
     // VIN yeniden okunmuyor: araba değişmedi ve sorunlu bir bus'a
     // gereksiz komut sormak kurtarmayı uzatır.
-    const initResult = await initElm327(queue, undefined, get().initResult?.vin ?? null);
+    const initResult = await initElm327(
+      queue,
+      undefined,
+      get().initResult?.vin ?? null,
+      get().initResult?.fuelTypeCode ?? null,
+    );
     set({ initResult });
     get().poller?.resetAfterRecovery();
     appendLog(set, {

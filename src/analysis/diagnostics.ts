@@ -21,7 +21,7 @@
  */
 
 import { maxOf } from '../util/agg';
-import { idleSamples, idleStabilityRpm, type SeriesMap, type TimeSeriesPoint } from './derived';
+import { idleSamples, idleStabilityRpm, resolvedFuel, type SeriesMap, type TimeSeriesPoint } from './derived';
 import { GENERIC_VEHICLE, ecuTyre, type VehicleProfile } from './vehicle';
 import {
   rollingCircumferenceMm,
@@ -1829,6 +1829,15 @@ export function batteryState(series: SeriesMap): Finding {
 // Hepsi bir arada
 // ---------------------------------------------------------------------------
 
+/** Yalnızca benzinli (kıvılcımlı ateşlemeli) motorda anlamlı kontroller. */
+const SPARK_IGNITION_ONLY: ReadonlySet<string> = new Set([
+  'vacuum',
+  'catalyst',
+  'o2_response',
+  'timing',
+  'fuel_trim_load',
+]);
+
 /**
  * Bütün kontrolleri çalıştırır ve önem sırasına dizer: dikkat isteyenler
  * önce, sonra sağlam çıkanlar, en sonda veri yetersizliğinden karar
@@ -1864,6 +1873,19 @@ export function runDiagnostics(series: SeriesMap, vehicle: VehicleProfile = GENE
   const calibration = tyreSizeCalibration(series, vehicle);
   if (calibration.verdict !== 'ok') findings.push(calibration);
 
+  /**
+   * Dizelde kıvılcımlı ateşlemeye özgü kontroller hiç listelenmiyor:
+   * rölantide vakum yok (kelebek yok), dar bant lambda sondası ve onun
+   * üstüne kurulu katalizör testi yok, ateşleme avansı yok. Bunları
+   * "inconclusive" diye göstermek "veri toplarsan cevap gelir" demek olurdu
+   * — dizelde hiçbir veri bu soruların cevabı değil. Vakum kontrolü ise
+   * dizelde sağlam motora "kaçak var" derdi.
+   */
+  const applicable =
+    resolvedFuel(vehicle, series) === 'diesel'
+      ? findings.filter((f) => !SPARK_IGNITION_ONLY.has(f.key))
+      : findings;
+
   const rank: Record<Verdict, number> = { attention: 0, ok: 1, inconclusive: 2 };
-  return findings.sort((a, b) => rank[a.verdict] - rank[b.verdict]);
+  return applicable.sort((a, b) => rank[a.verdict] - rank[b.verdict]);
 }

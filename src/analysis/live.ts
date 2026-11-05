@@ -14,6 +14,7 @@
 
 import {
   volumetricEfficiency,
+  resolvedFuel,
   fuelPer100Km,
   fuelRateLitersPerHour,
   estimateAirflowSpeedDensity,
@@ -35,6 +36,11 @@ export interface DerivedReading {
   readonly unsupported: readonly string[];
   /** Değer ölçüm değil tahminse kısa gerekçe (UI'da gösterilir). */
   readonly estimateNote?: string;
+  /**
+   * Kanallar tamam ama bu araçta hesaplanmıyorsa nedeni (ör. dizel).
+   * "Kanalı aç" ya da "sensör yok" notlarından ayrı gösteriliyor.
+   */
+  readonly reason?: string;
 }
 
 function latest(series: SeriesMap, key: string): number | null {
@@ -133,36 +139,54 @@ export function deriveLive(series: SeriesMap, options: DeriveOptions = {}): Deri
     });
   }
 
+  /**
+   * Tüketim havadan, benzinin stokiyometrik oranıyla (14.7) hesaplanıyor.
+   * Dizel sabit oranla çalışmıyor — rölantide 60:1'i bulan fakir karışım —
+   * yani aynı formül dizelde tüketimi kat kat fazla gösterirdi.
+   */
+  const fuel = resolvedFuel(vehicle, series);
+  const fuelReason =
+    fuel === 'gasoline'
+      ? undefined
+      : fuel === 'diesel'
+        ? 'Fuel use is not estimated for diesel engines — they run without a fixed air-fuel ratio.'
+        : fuel === 'other'
+          ? 'Fuel use is not estimated for this fuel type.'
+          : 'Fuel use waits until the fuel type is known: the ECU does not report it, and a short idle with manifold pressure (MAP) recorded tells petrol from diesel.';
+
   // --- Anlık tüketim ---
   {
     const missing = [...airflowMissing];
     const unsupported = [...airflowUnsupported];
     classify('0D', 'Speed', speed, missing, unsupported);
-    const value = airflow !== null && speed !== null ? fuelPer100Km(airflow, speed) : null;
+    const value =
+      !fuelReason && airflow !== null && speed !== null ? fuelPer100Km(airflow, speed) : null;
     out.push({
       key: 'derived_consumption',
       name: 'Consumption',
       short: 'Fuel',
       unit: 'L/100km',
       value,
-      missing,
-      unsupported,
+      missing: fuelReason ? [] : missing,
+      unsupported: fuelReason ? [] : unsupported,
       estimateNote: value !== null ? estimateNote : undefined,
+      reason: fuelReason,
     });
   }
 
   // --- Yakıt debisi (rölantide de anlamlı) ---
   {
-    const value = airflow !== null ? fuelRateLitersPerHour(airflow) : null;
+    const value = !fuelReason && airflow !== null ? fuelRateLitersPerHour(airflow) : null;
     out.push({
       key: 'derived_fuel_rate',
       name: 'Fuel rate',
       short: 'Fuel rate',
       unit: 'L/h',
       value,
-      missing: [...airflowMissing],
-      unsupported: [...airflowUnsupported],
+      missing: fuelReason ? [] : [...airflowMissing],
+      unsupported: fuelReason ? [] : [...airflowUnsupported],
       estimateNote: value !== null ? estimateNote : undefined,
+      reason: fuelReason,
     });
   }
 

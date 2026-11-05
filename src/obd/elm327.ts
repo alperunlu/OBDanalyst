@@ -13,7 +13,7 @@
  */
 
 import type { ObdTransport } from '../ble/transport';
-import type { SupportedPidMap } from './pids';
+import { isPidSupported, type SupportedPidMap } from './pids';
 import { parseVin } from './vin';
 
 /** ELM327 komut/cevap sınırı. Cevaplar bu prompt ile biter. */
@@ -158,6 +158,12 @@ export interface InitResult {
    */
   vin: string | null;
   /**
+   * PID 51 (fuel type) ham kodu, ECU destekliyorsa. Dizel ile benzinliyi
+   * ayıran en kesin kaynak; eski araçların çoğu desteklemiyor (`null`) ve o
+   * zaman analiz katmanı rölanti manifold basıncından çıkarıyor.
+   */
+  fuelTypeCode: number | null;
+  /**
    * Adaptör, komut sonundaki "beklenen cevap sayısı" hanesini anlıyor mu?
    *
    * 7 Eylül 2026 ölçümü: bir PID sorgusu 272 ms sürüyordu ve bu süre hangi
@@ -192,6 +198,8 @@ export async function initElm327(
    * bağlantı başında okunan hâlâ geçerli.
    */
   knownVin?: string | null,
+  /** Aynı gerekçeyle: kurtarmada yakıt tipi yeniden sorulmuyor. */
+  knownFuelTypeCode?: number | null,
 ): Promise<InitResult> {
   const reset = await queue.send('ATZ', RESET_TIMEOUT_MS);
   if (!/ELM327/i.test(reset)) {
@@ -252,6 +260,8 @@ export async function initElm327(
     throw new Error(`Adapter reported an implausible protocol: ${JSON.stringify(protocolNumber)}`);
   }
   const vin = knownVin !== undefined ? knownVin : await readVin(queue);
+  const fuelTypeCode =
+    knownFuelTypeCode !== undefined ? knownFuelTypeCode : await readFuelType(queue, supportedPids);
   const supportsReplyCount = await probeReplyCount(queue);
 
   return {
@@ -259,6 +269,7 @@ export async function initElm327(
     protocolNumber,
     supportedPids,
     vin,
+    fuelTypeCode,
     supportsReplyCount,
   };
 }
@@ -327,6 +338,25 @@ async function readVin(queue: CommandQueue): Promise<string | null> {
 
     const response = await queue.send('0902', VIN_TIMEOUT_MS);
     return parseVin(response);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PID 51'i okur — yalnızca 0140 bitmask'i onu destekliyor diyorsa.
+ *
+ * `isPidSupported` bilgi yokken `true` döner (kullanıcıyı engellememek
+ * için); burada tersi gerekiyor: bilgi yokken sormak, desteklemeyen bir
+ * K-line ECU'sunda boşa zaman aşımı beklemek demek.
+ */
+async function readFuelType(queue: CommandQueue, mask: SupportedPidMap): Promise<number | null> {
+  if (!mask.block40 || !isPidSupported('51', mask)) return null;
+  try {
+    const hex = extractDataHex(await queue.send('0151'), '51');
+    if (hex.length < 2) return null;
+    const code = parseInt(hex.slice(0, 2), 16);
+    return Number.isNaN(code) ? null : code;
   } catch {
     return null;
   }

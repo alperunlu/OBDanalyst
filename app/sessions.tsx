@@ -19,7 +19,12 @@ import { runDiagnostics, type Finding } from '../src/analysis/diagnostics';
 import { buildReportHtml } from '../src/report/html';
 import { analyseTrend } from '../src/analysis/trend';
 import { VITAL_META } from '../src/analysis/vitals';
-import { profileAssumptions, profileForVin, vehicleFor } from '../src/analysis/vehicle';
+import {
+  profileAssumptions,
+  profileForVin,
+  vehicleFor,
+  type VehicleProfile,
+} from '../src/analysis/vehicle';
 import { decodeVin } from '../src/obd/vin';
 import { JS_BUILD_TAG } from '../src/ui/buildTag';
 import { useAppStore } from '../src/state/store';
@@ -41,6 +46,7 @@ export default function TripsScreen() {
   // Araç profili (takılı lastik dahil) analizlerin girdisi.
   const vehicle = useAppStore((s) => s.vehicle);
   const fittedTyreChoice = useAppStore((s) => s.fittedTyreChoice);
+  const fuelByVin = useAppStore((s) => s.fuelByVin);
 
   /**
    * Bir trip, KAYDEDİLDİĞİ aracın profiliyle analiz ediliyor: VIN'i varsa
@@ -50,9 +56,11 @@ export default function TripsScreen() {
   const vehicleOf = useCallback(
     (session: Session) => {
       const id = profileForVin(session.vin);
-      return id ? vehicleFor(id, fittedTyreChoice) : vehicle;
+      if (!id) return vehicle;
+      // Yakıt: ECU'nun o araç için bildirdiği; bilinmiyorsa analiz veriden çıkarıyor.
+      return vehicleFor(id, fittedTyreChoice, session.vin ? fuelByVin[session.vin] : undefined);
     },
-    [vehicle, fittedTyreChoice],
+    [vehicle, fittedTyreChoice, fuelByVin],
   );
 
   const reload = useCallback(async () => {
@@ -292,6 +300,7 @@ export default function TripsScreen() {
                       summary={summary}
                       series={seriesById[s.id] ?? {}}
                       session={s}
+                      vehicle={vehicleOf(s)}
                     />
                   )}
 
@@ -407,12 +416,14 @@ function SummaryGrid({
   summary,
   series,
   session,
+  vehicle,
 }: {
   summary: TripSummary;
   series: SeriesMap;
   session: Session;
+  vehicle: VehicleProfile;
 }) {
-  const why = explainSummaryGaps(series, summary);
+  const why = explainSummaryGaps(series, summary, vehicle);
 
   /**
    * Bu aracın ECU'sunda hiç mümkün olmayan alanlar satır olarak bile

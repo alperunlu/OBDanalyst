@@ -14,6 +14,7 @@
 
 import { splitResponseLines } from './elm327';
 import { lookupMiniDtc, type MiniDtcEntry } from './dtcMini';
+import { GENERIC_DTC_DESCRIPTIONS, dtcCategory } from './dtcGeneric';
 import type { VehicleProfileId } from '../analysis/vehicle';
 
 export type DtcKind = 'stored' | 'pending' | 'permanent';
@@ -24,6 +25,11 @@ export interface Dtc {
   readonly kind: DtcKind;
   /** Açıklama — önce araca özel tablo, sonra jenerik SAE tablosu. */
   readonly description: string | null;
+  /**
+   * Kodun yapısından çıkan sistem (ör. "Ignition system or misfire").
+   * Açıklama yoksa en azından hangi sistemle ilgili olduğu söylenebiliyor.
+   */
+  readonly category: string;
   /** MINI/BMW servis cihazlarının gösterdiği fault code numarası (varsa). */
   readonly miniFaultCode: string | null;
   /** Açıklama araca özel tablodan mı geldi? */
@@ -104,6 +110,7 @@ export function parseDtcResponse(
       code,
       kind,
       description: mini?.text ?? describeDtc(code, profile),
+      category: dtcCategory(code),
       miniFaultCode: mini?.fc ?? null,
       vehicleSpecific: mini !== undefined,
     };
@@ -195,72 +202,6 @@ export function decodeReadiness(bytes: readonly number[]): ReadinessStatus | nul
 }
 
 /**
- * Jenerik OBD-II kodları için kısa açıklamalar.
- *
- * Yalnızca standart (SAE) kodlar burada. P1xxx gibi üretici-özel kodların
- * anlamı markaya göre değişir ve MINI için kamuya açık güvenilir bir liste
- * yok — onlarda `null` dönüp kodu ham gösteriyoruz, uydurmuyoruz.
- */
-const DESCRIPTIONS: Readonly<Record<string, string>> = {
-  P0010: 'Camshaft position actuator circuit (bank 1)',
-  P0011: 'Camshaft position - timing over-advanced (bank 1)',
-  P0014: 'Exhaust camshaft position - timing over-advanced (bank 1)',
-  P0016: 'Crankshaft/camshaft position correlation (bank 1 sensor A)',
-  P0030: 'O2 sensor heater control circuit (bank 1 sensor 1)',
-  P0100: 'Mass air flow circuit malfunction',
-  P0101: 'Mass air flow circuit range/performance',
-  P0102: 'Mass air flow circuit low input',
-  P0103: 'Mass air flow circuit high input',
-  P0105: 'Manifold absolute pressure circuit malfunction',
-  P0106: 'Manifold absolute pressure range/performance',
-  P0110: 'Intake air temperature circuit malfunction',
-  P0113: 'Intake air temperature circuit high input',
-  P0115: 'Engine coolant temperature circuit malfunction',
-  P0116: 'Engine coolant temperature range/performance',
-  P0117: 'Engine coolant temperature circuit low input',
-  P0118: 'Engine coolant temperature circuit high input',
-  P0120: 'Throttle position sensor circuit malfunction',
-  P0121: 'Throttle position sensor range/performance',
-  P0130: 'O2 sensor circuit malfunction (bank 1 sensor 1)',
-  P0133: 'O2 sensor slow response (bank 1 sensor 1)',
-  P0134: 'O2 sensor no activity detected (bank 1 sensor 1)',
-  P0135: 'O2 sensor heater circuit malfunction (bank 1 sensor 1)',
-  P0136: 'O2 sensor circuit malfunction (bank 1 sensor 2)',
-  P0141: 'O2 sensor heater circuit malfunction (bank 1 sensor 2)',
-  P0170: 'Fuel trim malfunction (bank 1)',
-  P0171: 'System too lean (bank 1)',
-  P0172: 'System too rich (bank 1)',
-  P0201: 'Injector circuit malfunction - cylinder 1',
-  P0202: 'Injector circuit malfunction - cylinder 2',
-  P0203: 'Injector circuit malfunction - cylinder 3',
-  P0204: 'Injector circuit malfunction - cylinder 4',
-  P0300: 'Random/multiple cylinder misfire detected',
-  P0301: 'Cylinder 1 misfire detected',
-  P0302: 'Cylinder 2 misfire detected',
-  P0303: 'Cylinder 3 misfire detected',
-  P0304: 'Cylinder 4 misfire detected',
-  P0325: 'Knock sensor circuit malfunction (bank 1)',
-  P0327: 'Knock sensor circuit low input (bank 1)',
-  P0335: 'Crankshaft position sensor circuit malfunction',
-  P0340: 'Camshaft position sensor circuit malfunction',
-  P0420: 'Catalyst system efficiency below threshold (bank 1)',
-  P0441: 'EVAP system incorrect purge flow',
-  P0442: 'EVAP system small leak detected',
-  P0443: 'EVAP purge control valve circuit malfunction',
-  P0455: 'EVAP system large leak detected',
-  P0480: 'Cooling fan 1 control circuit malfunction',
-  P0500: 'Vehicle speed sensor malfunction',
-  P0505: 'Idle control system malfunction',
-  P0506: 'Idle control system RPM lower than expected',
-  P0507: 'Idle control system RPM higher than expected',
-  P0562: 'System voltage low',
-  P0563: 'System voltage high',
-  P0601: 'Internal control module memory checksum error',
-  P0603: 'Internal control module KAM error',
-  P0605: 'Internal control module ROM error',
-};
-
-/**
  * Araca özel kod tablosu — yalnızca o aracın profilinde.
  *
  * P1xxx gibi üretici kodlarının anlamı markadan markaya değişiyor. R50
@@ -280,7 +221,7 @@ function lookupVehicleDtc(code: string, profile: VehicleProfileId): MiniDtcEntry
 export function describeDtc(code: string, profile: VehicleProfileId = 'generic'): string | null {
   const mini = lookupVehicleDtc(code, profile);
   if (mini) return mini.text;
-  return DESCRIPTIONS[code.toUpperCase()] ?? null;
+  return GENERIC_DTC_DESCRIPTIONS[code.toUpperCase()] ?? null;
 }
 
 /** Kod üretici-özel mi (P1xxx, C1xxx, B1xxx, U1xxx)? */
@@ -316,8 +257,7 @@ export function formatDtcReport(
     const list = groups[kind] ?? [];
     lines.push(`${titles[kind]}: ${list.length}`);
     for (const d of list) {
-      const desc =
-        d.description ?? (isManufacturerSpecific(d.code) ? '(manufacturer-specific)' : '(no description)');
+      const desc = d.description ?? `${d.category} — no detailed description`;
       const fc = d.miniFaultCode ? `  [FC ${d.miniFaultCode}]` : '';
       lines.push(`  ${d.code}  ${desc}${fc}`);
     }

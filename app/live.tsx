@@ -523,7 +523,9 @@ function DerivedSection({
   const readings = deriveLive(series, { isPidSupported, vehicle });
   const available = readings.filter((r) => r.value !== null);
   // Eylem alınabilir: kanal kapalı olduğu için hesaplanamıyor.
-  const actionable = readings.filter((r) => r.value === null && r.missing.length > 0);
+  const actionable = readings.filter((r) => r.value === null && !r.reason && r.missing.length > 0);
+  // Bu araçta bilerek hesaplanmayanlar (ör. dizelde tüketim) — gerekçe başına bir not.
+  const reasons = [...new Set(readings.filter((r) => r.value === null && r.reason).map((r) => r.reason!))];
   // Eylem alınamaz: araç gerekli sensöre sahip değil. Ayrı yazılıyor, çünkü
   // kullanıcının burada deneyecek bir şeyi yok — boşuna uğraşmasın.
   const impossible = readings.filter(
@@ -533,7 +535,9 @@ function DerivedSection({
   // tahminler uydurma olurdu. Sessizce boş kalmasın, nedeni yazsın.
   const needsProfile = vehicle.physics
     ? []
-    : readings.filter((r) => r.value === null && r.missing.length === 0 && r.unsupported.length === 0);
+    : readings.filter(
+        (r) => r.value === null && !r.reason && r.missing.length === 0 && r.unsupported.length === 0,
+      );
 
   return (
     <View style={{ marginTop: space(2) }}>
@@ -561,6 +565,10 @@ function DerivedSection({
           {'. The ECU does not report the required sensor.'}
         </Note>
       )}
+
+      {reasons.map((reason) => (
+        <Note key={reason}>{reason}</Note>
+      ))}
 
       {needsProfile.length > 0 && (
         <Note>

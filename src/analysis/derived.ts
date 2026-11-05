@@ -14,7 +14,7 @@
  */
 
 import { maxOf, extentOf } from '../util/agg';
-import { GENERIC_VEHICLE, PHYSICS, type VehicleProfile } from './vehicle';
+import { GENERIC_VEHICLE, PHYSICS, type FuelType, type VehicleProfile } from './vehicle';
 import { rollingCircumferenceMm, totalDriveRatio, estimatedEngineTorqueNm, roadLoadForceN } from './tyre';
 
 export interface TimeSeriesPoint {
@@ -534,6 +534,40 @@ export interface TripSummary {
 export type SeriesMap = Readonly<Record<string, readonly TimeSeriesPoint[]>>;
 
 /**
+ * Yakıt tipi veriden: sıcak rölantideki manifold basıncı.
+ *
+ * Benzinli motor gaz kelebeğiyle yükü kısar, rölantide manifoldda derin bir
+ * vakum olur (25-45 kPa). Dizelde kelebek yok; manifold rölantide atmosfer
+ * basıncında ya da turboyla üstündedir (~95-105 kPa). Aradaki boşluk o
+ * kadar geniş ki eşik kararı tartışmasız — ECU PID 51'i (fuel type)
+ * desteklemediğinde bu ölçüm onun yerini tutuyor.
+ *
+ * Rölanti şart: kontak açık motor kapalıyken manifold her iki motorda da
+ * atmosfer basıncında, dizel sanılırdı.
+ */
+export function inferFuelType(series: SeriesMap, vehicle: VehicleProfile = GENERIC_VEHICLE): FuelType {
+  const map = series['0B'] ?? [];
+  if (map.length === 0) return 'unknown';
+  const idle = idleSamples(series['0C'] ?? [], series['0D'] ?? [], vehicle);
+  const pressures: number[] = [];
+  for (const r of idle) {
+    const p = valueAtOrBefore(map, r.ts, 3000);
+    if (p !== null) pressures.push(p);
+  }
+  if (pressures.length < 10) return 'unknown';
+  const sorted = [...pressures].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  if (median >= 85) return 'diesel';
+  if (median <= 65) return 'gasoline';
+  return 'unknown';
+}
+
+/** Bilinen yakıt tipi, bilinmiyorsa veriden çıkarılanı. */
+export function resolvedFuel(vehicle: VehicleProfile, series: SeriesMap): FuelType {
+  return vehicle.fuel !== 'unknown' ? vehicle.fuel : inferFuelType(series, vehicle);
+}
+
+/**
  * Bir oturumun insan okur özeti. Hesaplanamayan alanlar `null` döner —
  * eksik veriyi sıfırla doldurmak yanıltıcı olurdu.
  */
@@ -609,8 +643,10 @@ export function summarizeTrip(series: SeriesMap, vehicle: VehicleProfile = GENER
           })
           .filter((p): p is TimeSeriesPoint => p !== null);
 
+  // Tüketim havadan, benzinin stokiyometrik oranıyla hesaplanıyor: yalnızca
+  // benzinlide geçerli. Dizel sabit bir oranla çalışmıyor, tahmin uydurma olur.
   const fuelValues: number[] = [];
-  for (const m of airflow) {
+  for (const m of resolvedFuel(vehicle, series) === 'gasoline' ? airflow : []) {
     const s = nearestValue(speed, m.ts);
     if (s === null) continue;
     const f = fuelPer100Km(m.value, s);
@@ -755,6 +791,7 @@ export function summarizeTrip(series: SeriesMap, vehicle: VehicleProfile = GENER
 export function explainSummaryGaps(
   series: SeriesMap,
   summary: TripSummary,
+  vehicle: VehicleProfile = GENERIC_VEHICLE,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   const hasChannel = (key: string) => (series[key]?.length ?? 0) > 0;
@@ -787,7 +824,18 @@ export function explainSummaryGaps(
           : 'coolant never reached the thermostat opening temperature in this trip';
   }
 
-  if (summary.avgFuelPer100Km === null) {
+  const fuel = resolvedFuel(vehicle, series);
+  if (summary.avgFuelPer100Km === null && fuel !== 'gasoline') {
+    out.avgFuelPer100Km =
+      fuel === 'diesel'
+        ? 'not estimated for diesel engines — they run without a fixed air-fuel ratio'
+        : fuel === 'other'
+          ? 'not estimated for this fuel type'
+          : 'fuel type unknown — the ECU does not report it and this trip has no idle manifold pressure to tell it';
+  } else if (summary.avgFuelPer100Km === null && !hasChannel('10') && !vehicle.physics) {
+    out.avgFuelPer100Km =
+      'no MAF on this car, and estimating airflow without one needs the engine size of a recognised vehicle';
+  } else if (summary.avgFuelPer100Km === null) {
     const missing: string[] = [];
     if (!hasChannel('0B')) missing.push('MAP');
     if (!hasChannel('0F')) missing.push('intake air temp');
@@ -820,8 +868,16 @@ export function explainSummaryGaps(
     out.fuelTrim = missing.length > 0 ? `needs ${missing.join(' + ')}` : 'no readings in this trip';
   }
 
-  if (summary.maxPowerKw === null) out.maxPowerKw = 'needs vehicle speed over time';
-  if (summary.maxEngineTorqueNm === null) {
+  if (summary.maxPowerKw === null) {
+    out.maxPowerKw = vehicle.physics
+      ? 'needs vehicle speed over time'
+      : 'needs the vehicle mass and aerodynamics — only known for recognised vehicles';
+  }
+  if (summary.maxEngineTorqueNm === null && !vehicle.physics) {
+    out.maxEngineTorqueNm = 'needs the vehicle mass — only known for recognised vehicles';
+  } else if (summary.maxEngineTorqueNm === null && !vehicle.fittedTyre) {
+    out.maxEngineTorqueNm = 'needs the tyre size — set it under Tyres on the Link screen';
+  } else if (summary.maxEngineTorqueNm === null) {
     const missing: string[] = [];
     if (!hasChannel('0C')) missing.push('RPM');
     if (!hasChannel('0D')) missing.push('vehicle speed');

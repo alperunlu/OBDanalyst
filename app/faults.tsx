@@ -148,7 +148,7 @@ export default function FaultsScreen() {
           <Note>
             {(vehicleId === 'mini_r50'
               ? `${MINI_R50_DTC_COUNT} MINI R50 service codes loaded, including P1xxx manufacturer codes. `
-              : 'Standard OBD-II descriptions. Manufacturer-specific codes (P1xxx) are shown without a description. ') +
+              : 'Standard OBD-II descriptions. Codes without a standard description, such as manufacturer-specific P1xxx, are shown with the system they belong to. ') +
               'This app only reads — Mode 04 is blocked at the command allowlist, so no clear command can reach the car.'}
           </Note>
         </ScrollView>
@@ -221,10 +221,7 @@ function CodeRow({ dtc, dim }: { dtc: Dtc; dim?: boolean }) {
         {tag ? <Tag text={tag.text} tint={tag.tint} /> : null}
       </View>
       <Text style={[type.prose, { color: ink, marginTop: space(1.75) }]}>
-        {dtc.description ??
-          (isManufacturerSpecific(dtc.code)
-            ? 'Manufacturer-specific — no description available'
-            : 'No description available')}
+        {dtc.description ?? `${dtc.category} — no detailed description`}
       </Text>
       {(dtc.vehicleSpecific || dtc.miniFaultCode) && (
         <Text style={[type.meta, { marginTop: space(1.25) }]}>

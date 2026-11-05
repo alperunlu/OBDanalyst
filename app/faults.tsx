@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
@@ -10,7 +10,15 @@ import { VITAL_META, vitalDecimals } from '../src/analysis/vitals';
 import { formatFreezeFrameValue, type FreezeFrame } from '../src/obd/freezeFrame';
 import { TREND_MIN_POINTS } from '../src/analysis/trend';
 import { VehicleChrome } from '../src/ui/VehicleChrome';
-import { SectionRule, Tag, PrimaryAction, GhostAction, Note } from '../src/ui/primitives';
+import {
+  SectionRule,
+  Tag,
+  PrimaryAction,
+  GhostAction,
+  Note,
+  Tap,
+  Chevron,
+} from '../src/ui/primitives';
 import { color, type, space, hairlineWidth } from '../src/ui/theme';
 
 /**
@@ -87,7 +95,12 @@ export default function FaultsScreen() {
 
       <View style={styles.body}>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-          <TrendSection trends={vitalTrends} />
+          {/*
+            Arıza kodları ekranın sahibi: "Read"in cevabı kaydırmadan
+            görünmeli. Trendler aşağıda; kayan bir ölçüm varsa burada tek
+            satırla haber veriliyor — erken uyarının değeri görülmesinde.
+          */}
+          <DriftAlert trends={vitalTrends} />
 
           {milStatus && (
             <View style={styles.headlineRow}>
@@ -132,6 +145,8 @@ export default function FaultsScreen() {
           )}
 
           {readiness && <Readiness readiness={readiness} />}
+
+          <TrendSection trends={vitalTrends} />
 
           {/*
             Esneyen boşluk. Ekran boşken aşağıdaki iki blok dibe, eylem
@@ -350,9 +365,11 @@ function TrendSection({
 }: {
   trends: ReturnType<typeof useAppStore.getState>['vitalTrends'];
 }) {
+  const [open, setOpen] = useState(false);
+
   if (trends.length === 0) {
     return (
-      <View style={{ marginBottom: space(5) }}>
+      <View style={{ marginTop: space(6) }}>
         <SectionRule label="Trends" meta="Nothing recorded yet" />
         <Note>
           Most of these readings come out of ordinary recordings on their own — a cold start, a
@@ -372,17 +389,20 @@ function TrendSection({
   const seen = new Set(trends.map((t) => t.key));
   const notYet = Object.entries(VITAL_META).filter(([key]) => !seen.has(key));
 
+  const quiet = building.length + steady + notYet.length;
+  const summary = [
+    building.length > 0 ? `${building.length} building a baseline` : null,
+    steady > 0 ? `${steady} steady` : null,
+    notYet.length > 0 ? `${notYet.length} not measured yet` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
   return (
-    <View style={{ marginBottom: space(5) }}>
+    <View style={{ marginTop: space(6) }}>
       <SectionRule
         label="Trends"
-        meta={
-          drifting.length > 0
-            ? `${drifting.length} moving`
-            : building.length > 0
-              ? `${building.length} building a baseline`
-              : `${trends.length} steady`
-        }
+        meta={drifting.length > 0 ? `${drifting.length} moving` : `${trends.length} measured`}
         metaColor={drifting.length > 0 ? color.caution : undefined}
       />
 
@@ -409,36 +429,77 @@ function TrendSection({
       })}
 
       {/*
-        Taban çizgisi kurulan ölçümler tek tek, ilerlemesiyle. Eskiden
-        "steady or still building a baseline" diye tek satıra gömülüyordu;
-        yeni bir kullanıcı haftalarca neyin ne kadar kaldığını göremiyordu.
+        Kayan ölçümler her zaman açık; geri kalanı (taban çizgisi kurulanlar,
+        sabitler, henüz ölçülmeyenler) tek satıra katlanıyor. Yeni bir
+        kullanıcıda bu liste on satırı geçiyordu ve okunması gereken tek
+        şey — kayan ölçüm — aralarında kayboluyordu.
       */}
-      {building.map((t) => (
-        <BaselineProgress
-          key={t.key}
-          label={t.label}
-          collected={TREND_MIN_POINTS - t.trend.needMore}
-          total={TREND_MIN_POINTS}
-        />
-      ))}
-
-      {steady > 0 ? (
-        <Text style={[type.metaSmall, { marginTop: space(2) }]}>
-          {`${steady} other measurement${steady === 1 ? '' : 's'} steady.`}
-        </Text>
+      {quiet > 0 ? (
+        <Tap
+          style={styles.trendToggle}
+          onPress={() => setOpen((v) => !v)}
+          highlight
+          accessibilityRole="button"
+          accessibilityState={{ expanded: open }}
+        >
+          <Text style={[type.metaSmall, { flex: 1 }]}>{summary}</Text>
+          <Chevron open={open} />
+        </Tap>
       ) : null}
 
-      {notYet.length > 0 ? (
-        <Text style={[type.metaSmall, { marginTop: space(2), lineHeight: 16 }]}>
-          {`Not measured yet: ${notYet.map(([, m]) => m.label).join(', ')}.`}
-        </Text>
-      ) : null}
+      {open ? (
+        <View>
+          {building.map((t) => (
+            <BaselineProgress
+              key={t.key}
+              label={t.label}
+              collected={TREND_MIN_POINTS - t.trend.needMore}
+              total={TREND_MIN_POINTS}
+            />
+          ))}
 
-      <Note>
-        Trends compare this car against its own earlier readings taken under the same conditions,
-        not against other cars, and they do not predict when something will fail. The oxygen
-        sensor readings come only from the guided cycle on Live.
-      </Note>
+          {steady > 0 ? (
+            <Text style={[type.metaSmall, { marginTop: space(2) }]}>
+              {`${steady} other measurement${steady === 1 ? '' : 's'} steady.`}
+            </Text>
+          ) : null}
+
+          {notYet.length > 0 ? (
+            <Text style={[type.metaSmall, { marginTop: space(2), lineHeight: 16 }]}>
+              {`Not measured yet: ${notYet.map(([, m]) => m.label).join(', ')}.`}
+            </Text>
+          ) : null}
+
+          <Note>
+            Trends compare this car against its own earlier readings taken under the same
+            conditions, not against other cars, and they do not predict when something will fail.
+            The oxygen sensor readings come only from the guided cycle on Live.
+          </Note>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * Ekranın üstündeki tek satır: kayan ölçüm varsa. Trend bölümü artık kodların
+ * altında; bu satır olmasa erken uyarı kaydırmadan görülmezdi.
+ */
+function DriftAlert({
+  trends,
+}: {
+  trends: ReturnType<typeof useAppStore.getState>['vitalTrends'];
+}) {
+  const drifting = trends.filter((t) => t.trend.verdict === 'drifting');
+  if (drifting.length === 0) return null;
+  return (
+    <View style={styles.driftAlert}>
+      <View style={[styles.trendBar, { backgroundColor: color.caution }]} />
+      <Text style={[type.prose, { color: color.ink, flex: 1 }]}>
+        {drifting.length === 1
+          ? `${drifting[0].label} is moving away from its baseline — see Trends below.`
+          : `${drifting.length} measurements are moving away from their baseline — see Trends below.`}
+      </Text>
     </View>
   );
 }
@@ -476,6 +537,19 @@ function BaselineProgress({
 
 const styles = StyleSheet.create({
   trendRow: { flexDirection: 'row', gap: space(2.5), paddingVertical: space(2.5) },
+  trendToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space(3),
+    minHeight: 44,
+    paddingVertical: space(2),
+  },
+  driftAlert: {
+    flexDirection: 'row',
+    gap: space(2.5),
+    paddingVertical: space(2),
+    marginBottom: space(4),
+  },
   freezeFrame: {
     marginTop: space(2.5),
     paddingLeft: space(3),
